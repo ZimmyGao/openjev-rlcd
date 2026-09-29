@@ -1,4 +1,4 @@
-"""Exact-enumeration checks of the estimators in openjev/estimators.py.
+"""Exact-enumeration checks of the estimators in openjev_rlcd/estimators.py.
 
 Tabular stand-in for a reasoning model: rationale r in {0..R-1} with
 pi(r) = softmax(a); answer distribution after r: u(r) = softmax(B[r]).
@@ -9,7 +9,7 @@ import itertools
 
 import torch
 
-from openjev.estimators import lambda_surrogate, rb_surrogate
+from openjev_rlcd.estimators import lambda_surrogate, rb_surrogate
 
 
 def check(r_n, k, m, seed):

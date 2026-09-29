@@ -2,7 +2,7 @@
 """Final tables for the epistemic tasks (GSM8K-Verify, MMLU-Pro): every arm, all seeds, after temperature
 scaling on dev, with paired tests on the test items (per-item values averaged over seeds first).
 
-  python -m openjev.final_tables --task gsm8kv|mmlupro [--results results]
+  python -m openjev_rlcd.final_tables --task gsm8kv|mmlupro [--results results]
 Arms (file prefix gv_ / mp_ in the results directory):
   base              zero-shot reasoning model                                   <px>_base_eval*.json
   SFT+TS            direct answer, CE, 400 (and 800) steps                      <px>_direct[800]_lr2e-6_seed*

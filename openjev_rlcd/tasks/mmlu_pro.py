@@ -6,7 +6,7 @@ Items carry the same fields the ChaosNLI code uses: q = one-hot ground truth, co
 Brier objective, the metrics (JSD to one-hot, accuracy, ECE, selective risk = 0/1 error) and the
 label draws all work unchanged. Options beyond an item's own count are masked out of u.
 
-  python -m openjev.tasks.mmlu_pro --probe N   zero-shot base model: direct answer vs one brief rationale
+  python -m openjev_rlcd.tasks.mmlu_pro --probe N   zero-shot base model: direct answer vs one brief rationale
 """
 import argparse
 import json

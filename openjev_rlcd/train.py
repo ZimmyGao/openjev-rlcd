@@ -21,7 +21,7 @@ Readouts at evaluation:
   vote    : frequency of argmax u_i
   single  : u_1 from ONE rationale (a single query)
 
-  python -m openjev.train --task gsm8kv ... --output results/x.json   (see scripts/ for every run)
+  python -m openjev_rlcd.train --task gsm8kv ... --output results/x.json   (see scripts/ for every run)
 """
 import argparse
 import json

@@ -1,7 +1,8 @@
-# Open-Jev: A Working RLCD Implementation
+# openjev-rlcd
 
-Code, run scripts, per-item results and the LaTeX source of the paper
-**"Open-Jev: A Working RLCD Implementation"**: reinforcement learning for calibrated decisions
+**Open-Jev: A Working RLCD Implementation**
+
+Code, run scripts, per-item results and the LaTeX source of the paper: reinforcement learning for calibrated decisions
 (RLCD) for reasoning language models.
 
 The model samples a rationale, and we **read** the answer distribution `u(r)` it commits to after
@@ -31,13 +32,13 @@ policy-gradient dilution, and aleatoric tasks where RL cannot beat cross-entropy
 ## Layout
 
 ```
-openjev/
+openjev_rlcd/
   estimators.py      mixture (Rao-Blackwellized) and per-rationale estimators, lambda-interpolation
-  train.py           RLCD stage 1 / stage 2, GRPO, RFT/STaR -- one training loop (python -m openjev.train)
+  train.py           RLCD stage 1 / stage 2, GRPO, RFT/STaR -- one training loop (python -m openjev_rlcd.train)
   train_direct.py    SFT baseline: direct answer, cross-entropy
   metrics.py         temperature scaling, ECE, AURC, coverage at a risk budget
   evaluation.py      per-item scoring after TS, paired bootstrap / sign-flip tests
-  final_tables.py    all arms of a task, pooled paired tests (python -m openjev.final_tables)
+  final_tables.py    all arms of a task, pooled paired tests (python -m openjev_rlcd.final_tables)
   tasks/             chaosnli, mmlu_pro, gsm8k_verify
 tests/               exact-enumeration unbiasedness checks of every estimator
 scripts/             one script per group of runs in the paper, a smoke test, table/PDF builder
@@ -87,16 +88,16 @@ Single runs:
 
 ```bash
 # stage 1: calibrate the readout (pathwise proper score only)
-python -m openjev.train --task mmlupro --m 4 --m-eval 4 --max-new-tokens 256 --steps 400 \
+python -m openjev_rlcd.train --task mmlupro --m 4 --m-eval 4 --max-new-tokens 256 --steps 400 \
   --dev-cap 300 --test-cap 1000 --diversity-weight 0 --kl-beta 0.04 --no-score-function \
   --seed 17 --save-checkpoint runs/stage1.pt --output runs/stage1.json
 # stage 2: reinforce the reasoning with the same proper score, anchored at stage 1
-python -m openjev.train --task mmlupro --m 4 --m-eval 4 --max-new-tokens 256 --steps 400 \
+python -m openjev_rlcd.train --task mmlupro --m 4 --m-eval 4 --max-new-tokens 256 --steps 400 \
   --dev-cap 300 --test-cap 1000 --diversity-weight 0 --kl-beta 0.04 --sf-coef 0.3 \
   --init-checkpoint runs/stage1.pt --seed 1017 --output runs/stage2.json
 ```
 
-`python -m openjev.train --help` lists every option, including the ablations (`--sf-reader`,
+`python -m openjev_rlcd.train --help` lists every option, including the ablations (`--sf-reader`,
 `--grad-diag`, `--readout-score log`, `--diversity-weight`, `--accuracy-bonus`).
 
 ## Result files
@@ -104,7 +105,7 @@ python -m openjev.train --task mmlupro --m 4 --m-eval 4 --max-new-tokens 256 --s
 Each training run writes a JSON with `config` (all arguments), `curve` (dev metrics during training),
 `dev_dists` / `test.dists` (per-item answer distributions for the `mixture` and `single` readouts),
 and `test` (raw metrics and rationale statistics). All reported metrics are recomputed from the
-per-item distributions after temperature scaling on dev (`openjev/evaluation.py`). File name
+per-item distributions after temperature scaling on dev (`openjev_rlcd/evaluation.py`). File name
 prefixes: `gv_` = GSM8K-Verify, `mp_` = MMLU-Pro, `teacher*` / `direct_fresh*` = ChaosNLI.
 
 ## Citation

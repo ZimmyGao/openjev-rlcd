@@ -10,7 +10,7 @@ item (fit_temperature, same protocol as every other arm).
   --labels fresh  : a fresh label per visit, the exact (item, label) stream the RL runs see
                     for the same seed and --items-per-step
 
-  python -m openjev.train_direct --task mmlupro --labels fresh --steps 400 --output results/x.json
+  python -m openjev_rlcd.train_direct --task mmlupro --labels fresh --steps 400 --output results/x.json
 """
 import argparse
 import json

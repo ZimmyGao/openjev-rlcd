@@ -6,7 +6,7 @@ whether the proposed answer is correct. Without reasoning a model can only use s
 reasoning it can recompute the answer, so this is epistemic uncertainty that reasoning removes.
 Labels come from comparing the proposal with the gold answer, so q is one-hot over [yes, no].
 
-  python -m openjev.tasks.gsm8k_verify --build   rebuilds data/gsm8k_verify.json (one GPU, ~20 min; the
+  python -m openjev_rlcd.tasks.gsm8k_verify --build   rebuilds data/gsm8k_verify.json (one GPU, ~20 min; the
                                                   released file is the one used in the paper)
 Splits: train/dev from GSM8K train (disjoint problems), test = GSM8K test.
 """

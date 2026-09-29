@@ -25,5 +25,5 @@ run() {
   local name=$1 module=$2; shift 2
   if [ -f "$OUT/$name.json" ] && grep -q '"test": {' "$OUT/$name.json"; then echo "skip $name (done)"; return; fi
   echo "[$(date '+%m-%d %H:%M')] $name"
-  $PY -m "openjev.$module" "$@" --output "$OUT/$name.json" > "$OUT/$name.log" 2>&1
+  $PY -m "openjev_rlcd.$module" "$@" --output "$OUT/$name.json" > "$OUT/$name.log" 2>&1
 }
