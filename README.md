@@ -2,7 +2,7 @@
 
 **Open-Jev: A Working RLCD Implementation**
 
-Code, run scripts, per-item results and the LaTeX source of the paper: reinforcement learning for calibrated decisions
+Code, run scripts and per-item results for the paper: reinforcement learning for calibrated decisions
 (RLCD) for reasoning language models.
 
 The model samples a rationale, and we **read** the answer distribution `u(r)` it commits to after
@@ -25,7 +25,7 @@ Results with Qwen3-1.7B (3 seeds, single query, temperature-scaled on dev):
 | GRPO + KL + TS | 91.8 / 0.150 / 0.061 / 19% | 42.4 / 0.753 / 0.481 / 0% |
 | **RLCD two-stage** | **92.2 / 0.135 / 0.034 / 81%** | **47.7 / 0.658 / 0.304 / 28%** |
 
-The paper (`paper/`) also covers the negative results: the mixture objective rewards disagreeing
+The paper also covers the negative results: the mixture objective rewards disagreeing
 rationales, the per-rationale objective switches reasoning off without a KL anchor,
 policy-gradient dilution, and aleatoric tasks where RL cannot beat cross-entropy.
 
@@ -41,10 +41,9 @@ openjev_rlcd/
   final_tables.py    all arms of a task, pooled paired tests (python -m openjev_rlcd.final_tables)
   tasks/             chaosnli, mmlu_pro, gsm8k_verify
 tests/               exact-enumeration unbiasedness checks of every estimator
-scripts/             one script per group of runs in the paper, a smoke test, table/PDF builder
+scripts/             one script per group of runs in the paper, a smoke test, the table builder
 results/             the 82 result files behind every table and figure (per-item dev/test distributions)
 data/gsm8k_verify.json   the GSM8K-Verify dataset (GSM8K + Qwen3-0.6B proposed answers)
-paper/               LaTeX source; tables, figures and numbers are generated from results/
 ```
 
 ## Install
@@ -61,10 +60,10 @@ the Hugging Face Hub on first use.
 
 ## Reproduce the paper
 
-Rebuild every table, figure and number from the released results. This needs no GPU.
+Rebuild every table from the released results. This needs no GPU.
 
 ```bash
-bash scripts/make_tables.sh            # prints the full tables, writes paper/{tables,figures,numbers.tex}, builds the PDF with tectonic if installed
+bash scripts/make_tables.sh            # all arms of both tasks, 3 seeds, after TS, with pooled paired tests
 ```
 
 Rerun the experiments. Each run writes `runs/<name>.json` and `runs/<name>.log`, and finished runs
