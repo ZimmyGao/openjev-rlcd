@@ -117,5 +117,9 @@ prefixes: `gv_` = GSM8K-Verify, `mp_` = MMLU-Pro, `teacher*` / `direct_fresh*` =
 }
 ```
 
+## License
+
+Code: [MIT](LICENSE). Datasets keep their own licenses: GSM8K (MIT), MMLU-Pro (MIT), ChaosNLI (CC BY-NC 4.0); `data/gsm8k_verify.json` is derived from GSM8K.
+
 Jev is a product of TypeSafe AI. This repository is an independent implementation, and makes no
 claim about Jev's internal training algorithm.
