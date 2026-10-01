@@ -1,6 +1,6 @@
 # openjev-rlcd
 
-**Open-Jev: A Working RLCD Implementation**
+**OpenJev-RLCD: A Working RLCD Implementation** ([arXiv:2609.38850](https://arxiv.org/abs/2609.38850))
 
 Code, run scripts and per-item results for the paper: reinforcement learning for calibrated decisions
 (RLCD) for reasoning language models.
@@ -110,10 +110,14 @@ prefixes: `gv_` = GSM8K-Verify, `mp_` = MMLU-Pro, `teacher*` / `direct_fresh*` =
 ## Citation
 
 ```bibtex
-@misc{wang2026openjev,
-  title  = {Open-Jev: A Working {RLCD} Implementation},
-  author = {Wang, Pichao},
-  year   = {2026},
+@misc{gao2026openjevrlcd,
+  title         = {{OpenJev-RLCD}: A Working {RLCD} Implementation},
+  author        = {Gao, Zhimin and Wang, Pichao},
+  year          = {2026},
+  eprint        = {2609.38850},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.AI},
+  url           = {https://arxiv.org/abs/2609.38850},
 }
 ```
 
