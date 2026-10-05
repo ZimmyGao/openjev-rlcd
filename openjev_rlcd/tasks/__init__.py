@@ -4,7 +4,13 @@
   mmlupro_stem : MMLU-Pro restricted to computation-heavy subjects
   gsm8kv       : epistemic yes/no -- is a weaker solver's GSM8K answer correct?
 """
+import re
+
 from . import chaosnli, gsm8k_verify, mmlu_pro
+
+# Some chat templates insert today's date (SmolLM3: "Today Date: ..."); pin it so that a run's prompts do not
+# change from one day to the next.
+FIXED_DATE = "05 October 2026"
 
 TASKS = {
     "chaosnli": dict(labels=chaosnli.LABELS, message=chaosnli.user_message, load=chaosnli.load_items,
@@ -21,5 +27,6 @@ TASKS = {
 
 def prompt(tok, item, task):
     """Chat prompt (Qwen3 non-thinking mode); the rationale is generated after it."""
-    return tok.apply_chat_template([{"role": "user", "content": TASKS[task]["message"](item)}], tokenize=False,
+    text = tok.apply_chat_template([{"role": "user", "content": TASKS[task]["message"](item)}], tokenize=False,
                                    add_generation_prompt=True, enable_thinking=False)
+    return re.sub(r"(Today Date: )[^\n]*", lambda m: m.group(1) + FIXED_DATE, text)

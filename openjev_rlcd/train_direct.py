@@ -21,6 +21,7 @@ from pathlib import Path
 import torch
 
 from .metrics import fit_temperature, readout_metrics
+from .offload import OffloadedAdamW, bf16_matmul_weights
 from .tasks import TASKS, prompt
 from .train import DEVICE, MARKER, Rationales, draw
 
@@ -43,6 +44,9 @@ def main():
     ap.add_argument("--eval-every", type=int, default=100)
     ap.add_argument("--dev-cap", type=int, default=0, help="0 = whole split")
     ap.add_argument("--test-cap", type=int, default=0, help="0 = whole split")
+    ap.add_argument("--offload-optimizer", action="store_true",
+                    help="bf16 Linear weights on the GPU, fp32 master weights + AdamW on the CPU (see offload.py)")
+    ap.add_argument("--gpu-headroom-gb", type=float, default=8.0, help="see train.py")
     ap.add_argument("--output", required=True)
     args = ap.parse_args()
 
@@ -61,12 +65,19 @@ def main():
     def group(items):
         for it in items:
             if it["uid"] not in cache:
-                cache[it["uid"]] = tok(prompt(tok, it, args.task))["input_ids"]
+                cache[it["uid"]] = tok(prompt(tok, it, args.task), add_special_tokens=False)["input_ids"]
         return [(cache[it["uid"]], answer, False) for it in items]
 
-    model = AutoModelForCausalLM.from_pretrained(args.model, dtype=torch.float32, attn_implementation="sdpa").to(DEVICE)
+    model = AutoModelForCausalLM.from_pretrained(args.model, dtype=torch.float32, attn_implementation="sdpa",
+                                                 device_map=DEVICE)
+    if args.offload_optimizer:
+        model = bf16_matmul_weights(model)
     model.gradient_checkpointing_enable()
-    opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.0)
+    if args.offload_optimizer:
+        opt = OffloadedAdamW(model, lr=args.lr, weight_decay=0.0, gpu_headroom_gb=args.gpu_headroom_gb)
+        print(json.dumps(dict(optimizer_on_gpu_b=opt.gpu_params_b, optimizer_on_cpu_b=opt.cpu_params_b)), flush=True)
+    else:
+        opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.0)
 
     @torch.no_grad()
     def predict(items):
@@ -99,7 +110,10 @@ def main():
         loss = -u.clamp_min(1e-12).log()[torch.arange(len(items), device=DEVICE), torch.tensor(ys, device=DEVICE)].mean()
         opt.zero_grad(set_to_none=True)
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        if args.offload_optimizer:
+            opt.clip_grad_norm_(1.0)
+        else:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         opt.step()
         if step % args.eval_every == 0:
             record(step)

@@ -24,6 +24,7 @@ Readouts at evaluation:
   python -m openjev_rlcd.train --task gsm8kv ... --output results/x.json   (see scripts/ for every run)
 """
 import argparse
+import contextlib
 import json
 import os
 import random
@@ -35,6 +36,7 @@ from torch.utils.checkpoint import checkpoint
 
 from .estimators import lambda_surrogate
 from .metrics import readout_metrics
+from .offload import OffloadedAdamW, bf16_matmul_weights
 from .tasks import TASKS, prompt
 
 MARKER = "Answer:"
@@ -48,6 +50,8 @@ def _token_logp(lm_head, h, tgt):
 class Rationales:
     def __init__(self, tok, task="chaosnli"):
         self.tok, self.task = tok, task
+        if tok.pad_token_id is None:  # padding is masked out everywhere; the pad id only has to exist
+            tok.pad_token = tok.eos_token
         self.label_ids = [tok.encode(" " + lab, add_special_tokens=False)[0] for lab in TASKS[task]["labels"]]
         assert len(set(self.label_ids)) == len(self.label_ids)
         self.eos = {tok.eos_token_id, tok.pad_token_id}
@@ -62,22 +66,28 @@ class Rationales:
         gen_model.eval()
         reqs = [(i, prompt(self.tok, it, self.task)) for i, it in enumerate(items) for _ in range(m)]
         out = [[] for _ in items]
+        stop = set(self.eos)  # the tokenizer's EOS/pad and every EOS id the model's generation config stops at
+        cfg = getattr(gen_model.generation_config, "eos_token_id", None)
+        stop |= set(cfg if isinstance(cfg, (list, tuple)) else [cfg]) - {None}
         for s in range(0, len(reqs), micro):
             chunk = reqs[s:s + micro]
-            enc = self.tok([p for _, p in chunk], return_tensors="pt", padding=True, padding_side="left").to(DEVICE)
-            gen = gen_model.generate(**enc, do_sample=True, temperature=1.0, top_p=1.0, top_k=0,
-                                     max_new_tokens=max_new_tokens, stop_strings=[MARKER], tokenizer=self.tok,
-                                     pad_token_id=self.tok.pad_token_id)
+            enc = self.tok([p for _, p in chunk], return_tensors="pt", padding=True, padding_side="left",
+                           add_special_tokens=False).to(DEVICE)  # the chat template already holds BOS etc.
+            mixed = getattr(gen_model, "openjev_mixed_precision", False)  # bf16 Linear + fp32 rest: needs autocast
+            with torch.autocast(DEVICE, dtype=torch.bfloat16) if mixed else contextlib.nullcontext():
+                gen = gen_model.generate(**enc, do_sample=True, temperature=1.0, top_p=1.0, top_k=0,
+                                         max_new_tokens=max_new_tokens, stop_strings=[MARKER], tokenizer=self.tok,
+                                         pad_token_id=self.tok.pad_token_id)
             width = enc["input_ids"].shape[1]
-            for (i, _), row, prow in zip(chunk, gen, enc["input_ids"]):
+            for (i, _), row, prow, pmask in zip(chunk, gen, enc["input_ids"], enc["attention_mask"]):
                 comp = row[width:].tolist()
-                cut = next((k for k, t in enumerate(comp) if t in self.eos), None)
+                cut = next((k for k, t in enumerate(comp) if t in stop), None)
                 head = comp if cut is None else comp[:cut]
                 if self.tok.decode(head).rstrip().endswith(MARKER):
                     rat, forced = head, False           # stopped at the marker
                 else:
                     rat, forced = (comp if cut is None else comp[:cut + 1]), True  # keep the sampled EOS
-                p_ids = prow[prow != self.tok.pad_token_id].tolist()
+                p_ids = prow[pmask.bool()].tolist()
                 out[i].append((p_ids, rat, forced))
         return out
 
@@ -224,6 +234,13 @@ def main():
                     help="start training from this saved (bf16) teacher; the KL reference is set to it as well, so "
                          "several continuations fork from an identical point (fresh optimizer state for all)")
     ap.add_argument("--checkpoint", default="", help="weights for --eval-only")
+    ap.add_argument("--offload-optimizer", action="store_true",
+                    help="for models whose fp32 weights + AdamW state do not fit on the GPU (3-4B on 48 GB): one GPU "
+                         "copy (bf16 Linear weights, fp32 rest) for sampling, forward and backward, fp32 gradient "
+                         "accumulation on the GPU, fp32 master weights and AdamW on the CPU (offload.py)")
+    ap.add_argument("--gpu-headroom-gb", type=float, default=8.0,
+                    help="with --offload-optimizer: GPU memory left free for activations and generation; the "
+                         "optimizer state of as many parameters as fit in the rest stays on the GPU")
     ap.add_argument("--eval-only", action="store_true",
                     help="re-evaluate --checkpoint (or the base model) on dev + test with the current metrics")
     ap.add_argument("--output", required=True)
@@ -247,9 +264,15 @@ def main():
         print(json.dumps({k: v for k, v in strip(t).items() if k not in ("dists", "examples")}), flush=True)
         return
 
-    model = AutoModelForCausalLM.from_pretrained(args.model, dtype=torch.float32, attn_implementation="sdpa").to(DEVICE)
+    if args.offload_optimizer:  # one GPU copy: sampled from, trained, refreshed from the CPU master weights
+        model = AutoModelForCausalLM.from_pretrained(args.model, dtype=torch.float32, attn_implementation="sdpa",
+                                                     device_map=DEVICE)
+        model = bf16_matmul_weights(model)
+        gen_model = model
+    else:  # fp32 weights for training, a bf16 copy for sampling, synced after every step
+        model = AutoModelForCausalLM.from_pretrained(args.model, dtype=torch.float32, attn_implementation="sdpa").to(DEVICE)
+        gen_model = AutoModelForCausalLM.from_pretrained(args.model, dtype=torch.bfloat16, attn_implementation="sdpa").to(DEVICE)
     model.gradient_checkpointing_enable()
-    gen_model = AutoModelForCausalLM.from_pretrained(args.model, dtype=torch.bfloat16, attn_implementation="sdpa").to(DEVICE)
     gp, tp = list(gen_model.parameters()), list(model.parameters())
     assert [p.shape for p in gp] == [p.shape for p in tp]
 
@@ -259,16 +282,24 @@ def main():
         ref_model.eval().requires_grad_(False)
     if args.init_checkpoint:
         state = torch.load(args.init_checkpoint, map_location=DEVICE)
-        for net in [model, gen_model] + ([ref_model] if ref_model is not None else []):
+        for net in {id(n): n for n in [model, gen_model] + ([ref_model] if ref_model is not None else [])}.values():
             net.load_state_dict(state)
         del state
 
     def sync():
+        if gen_model is model:  # the optimizer already refreshed the bf16 weights
+            return
         with torch.no_grad():
             for g, p in zip(gp, tp):
                 g.copy_(p)
 
-    opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.0)
+    if args.offload_optimizer:  # after the reference model is loaded: the GPU share of the optimizer uses what is free
+        opt = OffloadedAdamW(model, lr=args.lr, weight_decay=0.0, gpu_headroom_gb=args.gpu_headroom_gb)
+        print(json.dumps(dict(optimizer_on_gpu_b=opt.gpu_params_b, optimizer_on_cpu_b=opt.cpu_params_b)), flush=True)
+    else:
+        opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.0)
+    if DEVICE == "cuda":
+        torch.cuda.reset_peak_memory_stats()
     splits = load()
     dev, test = splits["dev"][:args.dev_cap], splits["test"][:args.test_cap]
     log, t0 = dict(config=vars(args), curve=[]), time.perf_counter()
@@ -362,21 +393,28 @@ def main():
             umax += ud.max(1).values.mean().item()
             var += ((ud - ud.mean(0)) ** 2).sum(1).mean().item()
             forced += sum(f for _, _, f in g)
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        if args.offload_optimizer:
+            opt.clip_grad_norm_(1.0)
+        else:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         opt.step()
         sync()
         if step % 10 == 0:
             print(json.dumps(dict(step=step, mean_p_of_outcome=hit / len(items),
                                   forced_marker_rate=forced / (args.m * len(items)), kl_est=kl_sum / len(items),
                                   mean_u_max=umax / len(items), var_u=var / len(items),
+                                  gpu_peak_gb=torch.cuda.max_memory_allocated() / 2**30 if DEVICE == "cuda" else 0.0,
                                   minutes=(time.perf_counter() - t0) / 60)), flush=True)
         if step % args.eval_every == 0:
             record(step)
     log["test"] = evaluate(gen_model, rat, test, args.m_eval, args.max_new_tokens, keep_dists=True)
     print(json.dumps({k: v for k, v in strip(log["test"]).items() if k not in ("dists", "examples")}), flush=True)
     Path(args.output).write_text(json.dumps(log, indent=2))
-    if args.save_checkpoint:
-        torch.save(gen_model.state_dict(), args.save_checkpoint)
+    if args.save_checkpoint:  # bf16, as the default recipe's sampling copy
+        state = gen_model.state_dict()
+        if args.offload_optimizer:
+            state = {k: v.to(torch.bfloat16) for k, v in state.items()}
+        torch.save(state, args.save_checkpoint)
 
 
 if __name__ == "__main__":
