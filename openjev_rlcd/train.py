@@ -47,6 +47,13 @@ def _token_logp(lm_head, h, tgt):
     return lm_head(h).float().log_softmax(-1).gather(-1, tgt[:, None]).squeeze(-1)
 
 
+def _token_kl(lm_head, ref_head, h, h_ref):
+    """KL(pi || pi_ref) between the next-token distributions at each position (rows of h, h_ref)."""
+    lp = lm_head(h).float().log_softmax(-1)
+    lq = ref_head(h_ref).float().log_softmax(-1)
+    return (lp.exp() * (lp - lq)).sum(-1)
+
+
 class Rationales:
     def __init__(self, tok, task="chaosnli", micro=64):
         self.tok, self.task, self.micro = tok, task, micro  # micro: sequences generated per batch
@@ -92,9 +99,10 @@ class Rationales:
                 out[i].append((p_ids, rat, forced))
         return out
 
-    def forward(self, model, group, grad, need_logp=None, k=None, chunk=512):
+    def forward(self, model, group, grad, need_logp=None, k=None, chunk=512, return_hidden=False):
         """group: list of (prompt_ids, rationale_ids, forced). Returns u [M, K] (zero beyond each
-        row's option count k: int or per-row list) and logp_r [M] (None unless grad or need_logp).
+        row's option count k: int or per-row list) and logp_r [M] (None unless grad or need_logp),
+        plus (hidden states, row index, position) of the rationale positions with return_hidden.
         Vocabulary logits are computed only at the answer position and, in checkpointed chunks,
         at the rationale positions -- never over the prompt."""
         need_logp = grad if need_logp is None else need_logp
@@ -134,7 +142,23 @@ class Rationales:
                 else:
                     parts.append(_token_logp(model.lm_head, hs, tgt[s:s + chunk]))
             lp = torch.cat(parts) if parts else torch.zeros(0, device=DEVICE)
-        return u, torch.zeros(len(seqs), device=DEVICE).index_add(0, b, lp)
+        logp = torch.zeros(len(seqs), device=DEVICE).index_add(0, b, lp)
+        return (u, logp, (h, b, t)) if return_hidden else (u, logp)
+
+    def token_kl(self, model, aux, ref_model, ref_aux, chunk=256):
+        """Per rationale, the sum over its positions of KL(pi || pi_ref) between next-token distributions,
+        differentiable through pi (pathwise). This anchors the rationale distribution without going
+        through REINFORCE, so it also acts in stage 1, where the rationales get no score-function
+        gradient. aux / ref_aux: the return_hidden outputs of forward on the same group."""
+        (h, b, t), (hr, br, tr) = aux, ref_aux
+        assert torch.equal(b, br) and torch.equal(t, tr)
+        parts = []
+        with torch.autocast(DEVICE, dtype=torch.bfloat16):
+            for s in range(0, len(b), chunk):
+                hs, hq = h[b[s:s + chunk], t[s:s + chunk]], hr[b[s:s + chunk], t[s:s + chunk]]
+                parts.append(checkpoint(_token_kl, model.lm_head, ref_model.lm_head, hs, hq, use_reentrant=False))
+        kl = torch.cat(parts) if parts else torch.zeros(0, device=DEVICE)
+        return torch.zeros(h.shape[0], device=DEVICE).index_add(0, b, kl)
 
 
 def repetition(text):
@@ -204,6 +228,11 @@ def main():
     ap.add_argument("--dev-cap", type=int, default=199)
     ap.add_argument("--test-cap", type=int, default=400)
     ap.add_argument("--kl-beta", type=float, default=0.0, help="KL(pi || pi_ref) on rationales, via reward shaping")
+    ap.add_argument("--kl-tokens", type=float, default=0.0,
+                    help="beta for a pathwise KL anchor: beta * sum over rationale positions of KL(pi || pi_ref) of the "
+                         "next-token distributions (needs --kl-beta > 0 for the reference model). Unlike the REINFORCE "
+                         "KL shaping it also acts in stage 1 (--no-score-function), where the readout gradient otherwise "
+                         "lets the rationales drift")
     ap.add_argument("--length-penalty", type=float, default=0.0, help="penalty for rationales that never write the marker")
     ap.add_argument("--diversity-weight", type=float, default=1.0,
                     help="lambda in J_single + lambda Var_r(u): 1 = mixture objective, 0 = per-rationale objective")
@@ -327,14 +356,15 @@ def main():
         groups = rat.sample(gen_model, items, args.m, args.max_new_tokens)
         model.train()
         opt.zero_grad(set_to_none=True)
-        hit, forced, kl_sum, umax, var = 0.0, 0, 0.0, 0.0, 0.0
+        hit, forced, kl_sum, umax, var, kl_tok_sum = 0.0, 0, 0.0, 0.0, 0.0, 0.0
+        tok_anchor = args.kl_tokens > 0 and ref_model is not None
         for it, g in zip(items, groups):
             y = draw(rng, it)  # one fresh outcome (always drawn: same item order across arms)
             if args.fixed_label:
                 y = fixed[it["uid"]]
             k = rat.k(it)
-            u, logp_r = rat.forward(model, g, grad=True, k=k)
-            u = u[:, :k]
+            out = rat.forward(model, g, grad=True, k=k, return_hidden=tok_anchor)
+            u, logp_r = out[0][:, :k], out[1]
             if args.no_score_function or step <= args.pathwise_warmup:
                 logp_r = logp_r.detach()
             m = len(g)
@@ -342,8 +372,8 @@ def main():
             u_ref = None
             if ref_model is not None:
                 with torch.no_grad():
-                    u_ref, ref_lp = rat.forward(ref_model, g, grad=False, need_logp=True, k=k)
-                u_ref = u_ref[:, :k]
+                    ref_out = rat.forward(ref_model, g, grad=False, need_logp=True, k=k, return_hidden=tok_anchor)
+                u_ref, ref_lp = ref_out[0][:, :k], ref_out[1]
                 logratio = logp_r.detach() - ref_lp
                 extra -= (args.kl_beta / m) * logratio
                 kl_sum += logratio.mean().item()
@@ -390,6 +420,10 @@ def main():
                                           diag_ratio=(vs.norm() / vp.norm().clamp_min(1e-12)).item(),
                                           diag_cos=torch.nn.functional.cosine_similarity(vp, vs, dim=0).item())),
                           flush=True)
+            if tok_anchor:  # pathwise KL anchor on the rationale distribution
+                kl_tok = rat.token_kl(model, out[2], ref_model, ref_out[2])
+                loss = loss + args.kl_tokens * kl_tok.mean()
+                kl_tok_sum += kl_tok.mean().item()
             (loss / len(items)).backward()
             hit += u[:, y].mean().item()
             ud = u.detach()
@@ -405,6 +439,7 @@ def main():
         if step % 10 == 0:
             print(json.dumps(dict(step=step, mean_p_of_outcome=hit / len(items),
                                   forced_marker_rate=forced / (args.m * len(items)), kl_est=kl_sum / len(items),
+                                  kl_tokens=kl_tok_sum / len(items),
                                   mean_u_max=umax / len(items), var_u=var / len(items),
                                   gpu_peak_gb=torch.cuda.max_memory_allocated() / 2**30 if DEVICE == "cuda" else 0.0,
                                   minutes=(time.perf_counter() - t0) / 60)), flush=True)
