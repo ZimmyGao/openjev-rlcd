@@ -12,7 +12,7 @@ SEEDS=${SEEDS:-"17 23 29"}
 PY=${PY:-python}
 MODEL=${MODEL:-Qwen/Qwen3-1.7B}
 MFLAGS="--model $MODEL"
-[ "${OFFLOAD:-0}" = 1 ] && MFLAGS="$MFLAGS --offload-optimizer --gpu-headroom-gb ${GPU_HEADROOM_GB:-12}"
+[ "${OFFLOAD:-0}" = 1 ] && MFLAGS="$MFLAGS --offload-optimizer --gpu-headroom-gb ${GPU_HEADROOM_GB:-16} --gen-batch 32"
 mkdir -p "$OUT"
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 

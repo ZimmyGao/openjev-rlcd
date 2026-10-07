@@ -47,6 +47,7 @@ def main():
     ap.add_argument("--offload-optimizer", action="store_true",
                     help="bf16 Linear weights on the GPU, fp32 master weights + AdamW on the CPU (see offload.py)")
     ap.add_argument("--gpu-headroom-gb", type=float, default=8.0, help="see train.py")
+    ap.add_argument("--gen-batch", type=int, default=64, help="unused (no generation); accepted for the scripts")
     ap.add_argument("--output", required=True)
     args = ap.parse_args()
 

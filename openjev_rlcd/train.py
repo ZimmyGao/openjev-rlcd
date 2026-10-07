@@ -48,8 +48,8 @@ def _token_logp(lm_head, h, tgt):
 
 
 class Rationales:
-    def __init__(self, tok, task="chaosnli"):
-        self.tok, self.task = tok, task
+    def __init__(self, tok, task="chaosnli", micro=64):
+        self.tok, self.task, self.micro = tok, task, micro  # micro: sequences generated per batch
         if tok.pad_token_id is None:  # padding is masked out everywhere; the pad id only has to exist
             tok.pad_token = tok.eos_token
         self.label_ids = [tok.encode(" " + lab, add_special_tokens=False)[0] for lab in TASKS[task]["labels"]]
@@ -61,9 +61,10 @@ class Rationales:
         return TASKS[self.task]["k"](item)
 
     @torch.no_grad()
-    def sample(self, gen_model, items, m, max_new_tokens, micro=64):
+    def sample(self, gen_model, items, m, max_new_tokens, micro=None):
         """Per item, m tuples (prompt_ids, rationale_ids, forced: bool)."""
         gen_model.eval()
+        micro = micro or self.micro
         reqs = [(i, prompt(self.tok, it, self.task)) for i, it in enumerate(items) for _ in range(m)]
         out = [[] for _ in items]
         stop = set(self.eos)  # the tokenizer's EOS/pad and every EOS id the model's generation config stops at
@@ -238,6 +239,8 @@ def main():
                     help="for models whose fp32 weights + AdamW state do not fit on the GPU (3-4B on 48 GB): one GPU "
                          "copy (bf16 Linear weights, fp32 rest) for sampling, forward and backward, fp32 gradient "
                          "accumulation on the GPU, fp32 master weights and AdamW on the CPU (offload.py)")
+    ap.add_argument("--gen-batch", type=int, default=64,
+                    help="sequences generated per batch (smaller for long prompts on a full GPU; same distribution)")
     ap.add_argument("--gpu-headroom-gb", type=float, default=8.0,
                     help="with --offload-optimizer: GPU memory left free for activations and generation; the "
                          "optimizer state of as many parameters as fit in the rest stays on the GPU")
@@ -250,7 +253,7 @@ def main():
     torch.manual_seed(args.seed)
     rng = random.Random(args.seed)
     tok = AutoTokenizer.from_pretrained(args.model)
-    rat = Rationales(tok, args.task)
+    rat = Rationales(tok, args.task, micro=args.gen_batch)
     load = TASKS[args.task]["load"]
 
     if args.eval_only:  # same bf16 weights the training loop samples from and saves
