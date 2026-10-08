@@ -25,6 +25,7 @@ Readouts at evaluation:
 """
 import argparse
 import contextlib
+import gc
 import json
 import os
 import random
@@ -445,14 +446,21 @@ def main():
                                   minutes=(time.perf_counter() - t0) / 60)), flush=True)
         if step % args.eval_every == 0:
             record(step)
-    log["test"] = evaluate(gen_model, rat, test, args.m_eval, args.max_new_tokens, keep_dists=True)
-    print(json.dumps({k: v for k, v in strip(log["test"]).items() if k not in ("dists", "examples")}), flush=True)
-    Path(args.output).write_text(json.dumps(log, indent=2))
-    if args.save_checkpoint:  # bf16, as the default recipe's sampling copy
+    if args.save_checkpoint:  # bf16, as the default recipe's sampling copy; saved before the test pass
         state = gen_model.state_dict()
         if args.offload_optimizer:
             state = {k: v.to(torch.bfloat16) for k, v in state.items()}
         torch.save(state, args.save_checkpoint)
+        del state
+    # free training-only memory (optimizer state, gradients, reference model) before the long test pass
+    model.zero_grad(set_to_none=True)
+    del opt, ref_model
+    gc.collect()
+    if DEVICE == "cuda":
+        torch.cuda.empty_cache()
+    log["test"] = evaluate(gen_model, rat, test, args.m_eval, args.max_new_tokens, keep_dists=True)
+    print(json.dumps({k: v for k, v in strip(log["test"]).items() if k not in ("dists", "examples")}), flush=True)
+    Path(args.output).write_text(json.dumps(log, indent=2))
 
 
 if __name__ == "__main__":
