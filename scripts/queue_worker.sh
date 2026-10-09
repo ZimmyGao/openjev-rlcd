@@ -16,7 +16,7 @@ gpu_busy_nonvml() {  # NVML unusable (e.g. driver libraries upgraded under a loa
   local p n          # with CUDA_VISIBLE_DEVICES=<this gpu>, or holding many handles on its device file (a CUDA context)
   for p in /proc/[0-9]*; do
     case "$(cat "$p/comm" 2>/dev/null)" in python*) ;; *) continue ;; esac
-    tr '\0' '\n' < "$p/environ" 2>/dev/null | grep -qx "CUDA_VISIBLE_DEVICES=$GPU" && return 0
+    tr '\0' '\n' 2>/dev/null < "$p/environ" | grep -qx "CUDA_VISIBLE_DEVICES=$GPU" && return 0
     n=$(ls -l "$p/fd" 2>/dev/null | grep -c "/dev/nvidia$GPU$")
     [ "$n" -ge 8 ] && return 0
   done
