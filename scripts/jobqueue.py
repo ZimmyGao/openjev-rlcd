@@ -15,7 +15,7 @@ A job whose <outdir>/<name>.json is already complete is dropped; a failed job is
     jobqueue.py pop --gpu 0 --worker PID   print the popped job line (exit 0); exit 3 = all blocked, 4 = queue empty
     jobqueue.py finish --gpu 0 --name N --out D --ok 0|1 --rc RC
     jobqueue.py show
-    jobqueue.py push [--front] < job_lines
+    jobqueue.py push [--front | --pos N] < job_lines
 """
 import argparse
 import fcntl
@@ -223,9 +223,9 @@ def finish(gpu, name, out, ok, rc):
     return 0
 
 
-def push(front):
+def push(front, pos=None):
     """add job lines read from stdin (validated; already queued or running jobs are skipped), at the front of the
-    queue (after its leading comment lines) or at the end"""
+    queue (after its leading comment lines), after its first `pos` jobs, or at the end"""
     new = [x.strip() for x in sys.stdin.read().splitlines() if is_job(x)]
     for x in new:
         parse(x)
@@ -241,9 +241,10 @@ def push(front):
                 continue
             have.add((j["out"], j["name"]))
             add.append(x)
-        if front:
-            k = 0
-            while k < len(lines) and not is_job(lines[k]):
+        if front or pos is not None:
+            k, seen = 0, 0
+            while k < len(lines) and (not is_job(lines[k]) or seen < (pos or 0)):
+                seen += is_job(lines[k])
                 k += 1
             lines = lines[:k] + add + lines[k:]
         else:
@@ -285,11 +286,12 @@ def main():
     sub.add_parser("show")
     u = sub.add_parser("push")
     u.add_argument("--front", action="store_true")
+    u.add_argument("--pos", type=int, help="insert after the first POS queued jobs")
     a = ap.parse_args()
     if a.cmd == "pop":
         return pop(a.gpu, a.worker)
     if a.cmd == "push":
-        return push(a.front)
+        return push(a.front, a.pos)
     if a.cmd == "finish":
         return finish(a.gpu, a.name, a.out, a.ok, a.rc)
     return show()
