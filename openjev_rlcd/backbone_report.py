@@ -9,7 +9,7 @@ Recipes (file names as in scripts/two_stage.sh / scripts/backbone.sh):
   old       the paper's stage 1 / two-stage: the KL term (beta 0.04) enters only as a score-function reward, so it is
             inactive in stage 1 (no score-function term) -- results/ for Qwen3-1.7B, runs/backbones/<model>/ otherwise
   anchored  + the pathwise token-level KL anchor on the rationales (--kl-tokens 0.04) in both stages:
-            runs/anchored/<model>/ (scripts/plan_anchored.py)
+            runs/anchored/<model>/ (scripts/plan_anchored.py); <px>_warm400_kt<w>_seed<s> = stage 1 with anchor weight w
 The recipe-independent baselines (base, SFT+TS, GRPO+TS, RFT+KL+TS) come from the old directories.
 A paired test uses only the seeds both arms have; per-item values are averaged over those seeds first (as in
 final_tables), so the p-values reflect item sampling, not seed-to-seed variation.
@@ -55,6 +55,8 @@ def arms(model, px):
         ("fgrpo_old", "旧 s1 + GRPO", old, f"{px}_fork_grpo_seed{{s}}", "teacher"),
         ("ce_old", "旧 stage 1（log score）", old, f"{px}_ce_seed{{s}}", "teacher"),
         ("s1", "stage 1", new, f"{px}_warm400_seed{{s}}", "teacher"),
+        ("s1_kt01", "stage 1（锚点 0.01）", new, f"{px}_warm400_kt0.01_seed{{s}}", "teacher"),
+        ("s1_kt0025", "stage 1（锚点 0.0025）", new, f"{px}_warm400_kt0.0025_seed{{s}}", "teacher"),
         ("rl", "两阶段（s1 + RLCD-RL）", new, f"{px}_fork_rl_seed{{s}}", "teacher"),
         ("rlnoanc", "s1 + RLCD-RL（stage 2 无锚点）", new, f"{px}_fork_rlnoanc_seed{{s}}", "teacher"),
         ("ro", "s1 + 只训读出", new, f"{px}_fork_ro_seed{{s}}", "teacher"),
@@ -68,6 +70,10 @@ def arms(model, px):
 PAIRS = [
     ("s1", "s1_old", "stage 1：新配方 vs 旧配方"),
     ("rl", "rl_old", "两阶段：新配方 vs 旧配方"),
+    ("s1_kt01", "s1", "stage 1：锚点 0.01 vs 0.04"),
+    ("s1_kt01", "s1_old", "stage 1：锚点 0.01 vs 无锚点（旧）"),
+    ("s1_kt0025", "s1", "stage 1：锚点 0.0025 vs 0.04"),
+    ("s1_kt0025", "s1_old", "stage 1：锚点 0.0025 vs 无锚点（旧）"),
     ("rl", "s1", "stage 2（RLCD-RL）有没有增益"),
     ("rl", "rlnoanc", "stage 2 里锚点的作用"),
     ("rl", "ro", "RLCD-RL vs 只训读出续训"),

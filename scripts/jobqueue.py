@@ -15,6 +15,7 @@ A job whose <outdir>/<name>.json is already complete is dropped; a failed job is
     jobqueue.py pop --gpu 0 --worker PID   print the popped job line (exit 0); exit 3 = all blocked, 4 = queue empty
     jobqueue.py finish --gpu 0 --name N --out D --ok 0|1 --rc RC
     jobqueue.py show
+    jobqueue.py push [--front] < job_lines
 """
 import argparse
 import fcntl
@@ -222,6 +223,39 @@ def finish(gpu, name, out, ok, rc):
     return 0
 
 
+def push(front):
+    """add job lines read from stdin (validated; already queued or running jobs are skipped), at the front of the
+    queue (after its leading comment lines) or at the end"""
+    new = [x.strip() for x in sys.stdin.read().splitlines() if is_job(x)]
+    for x in new:
+        parse(x)
+    with Lock():
+        lines = read_lines(QDIR / "queue.txt")
+        have = {(parse(x)["out"], parse(x)["name"]) for x in lines if is_job(x)}
+        have |= {(r["job"]["out"], r["job"]["name"]) for r in running_entries()}
+        add = []
+        for x in new:
+            j = parse(x)
+            if (j["out"], j["name"]) in have:
+                say(f"push: {j['out']}/{j['name']} already queued or running, skipped")
+                continue
+            have.add((j["out"], j["name"]))
+            add.append(x)
+        if front:
+            k = 0
+            while k < len(lines) and not is_job(lines[k]):
+                k += 1
+            lines = lines[:k] + add + lines[k:]
+        else:
+            lines = lines + add
+        write_lines(QDIR / "queue.txt", lines)
+        for x in add:
+            j = parse(x)
+            say(f"push{' (front)' if front else ''}: {j['out']}/{j['name']}")
+    print(f"added {len(add)} of {len(new)} jobs")
+    return 0
+
+
 def show():
     with Lock():
         running = running_entries()
@@ -249,9 +283,13 @@ def main():
     f.add_argument("--ok", type=int, required=True)
     f.add_argument("--rc", type=int, required=True)
     sub.add_parser("show")
+    u = sub.add_parser("push")
+    u.add_argument("--front", action="store_true")
     a = ap.parse_args()
     if a.cmd == "pop":
         return pop(a.gpu, a.worker)
+    if a.cmd == "push":
+        return push(a.front)
     if a.cmd == "finish":
         return finish(a.gpu, a.name, a.out, a.ok, a.rc)
     return show()
