@@ -21,6 +21,7 @@ import argparse
 import fcntl
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -33,6 +34,13 @@ MIN_FREE_GB = {"smol": 45, "phi": 55}
 # a bash process running one of the experiment scripts (not e.g. "bash -c <command line mentioning a model>")
 SCRIPT = re.compile(r"(\S*/)?bash\s+(\S*/)?(run_task|run|backbone|two_stage|baselines|ablations|worker)\.sh(\s|$)")  # MemAvailable needed before an offload job may start
 MAX_FAILS = 2
+# below this much free disk no job starts, and a job that fails is re-queued at the front without counting as a
+# failure (a full disk would otherwise fail every job in turn and drop the whole queue)
+MIN_DISK_GB = float(os.environ.get("QUEUE_MIN_DISK_GB", "40"))
+
+
+def disk_free_gb():
+    return shutil.disk_usage(QDIR).free / 2**30
 
 
 def now():
@@ -164,6 +172,14 @@ def pop(gpu, worker):
             elif not complete(Path(r["job"]["out"]) / f"{r['job']['name']}.json"):
                 say(f"gpu{r['gpu']} worker {r['pid']} gone: re-queue {r['job']['out']}/{r['job']['name']}")
                 lines.insert(0, r["job"]["line"])
+        free_disk = disk_free_gb()
+        if free_disk < MIN_DISK_GB:
+            last = read_lines(QDIR / "status.txt")[-1:]
+            if not (last and "disk low" in last[0]):
+                say(f"disk low ({free_disk:.0f} GB free < {MIN_DISK_GB:.0f}): no new job starts")
+            write_lines(QDIR / "running.txt", [r["raw"] for r in running])
+            write_lines(qpath, lines)
+            return 3
         busy = {r["job"]["res"] for r in running} | external_classes()
         free_gb = mem_available_gb()
         keep, chosen, seen = [], None, set()
@@ -206,9 +222,21 @@ def finish(gpu, name, out, ok, rc):
             else:
                 others.append(r["raw"])
         write_lines(QDIR / "running.txt", others)
-        with open(QDIR / "history.txt", "a") as f:
-            f.write(f"{now()} gpu{gpu} {out}/{name} rc={rc} ok={ok}\n")
+        disk_low = not ok and disk_free_gb() < MIN_DISK_GB
+        with open(QDIR / "history.txt", "a") as f:  # a disk-low failure ends in "disk-low": not counted below
+            f.write(f"{now()} gpu{gpu} {out}/{name} rc={rc} ok={ok}{' disk-low' if disk_low else ''}\n")
         if ok or mine is None:
+            return 0
+        if disk_low:
+            log = Path(out) / f"{name}.log"
+            if log.exists():
+                os.replace(log, Path(out) / f"{name}.faildisk.log")
+            lines = read_lines(QDIR / "queue.txt")
+            k = 0
+            while k < len(lines) and not is_job(lines[k]):
+                k += 1
+            write_lines(QDIR / "queue.txt", lines[:k] + [mine["job"]["line"]] + lines[k:])
+            say(f"gpu{gpu} FAILED {out}/{name} (rc={rc}) while the disk was low: re-queued at the front, not counted")
             return 0
         fails = sum(1 for x in read_lines(QDIR / "history.txt") if f" {out}/{name} " in x and x.endswith("ok=0"))
         log = Path(out) / f"{name}.log"
