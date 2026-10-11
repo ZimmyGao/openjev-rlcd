@@ -6,11 +6,14 @@ rationales, and the progress of the GPU job queue.
   python -m openjev_rlcd.backbone_report [--out runs/anchored/REPORT.md] [--no-cache]
 
 Recipes (file names as in scripts/two_stage.sh / scripts/backbone.sh):
-  old       the paper's stage 1 / two-stage: the KL term (beta 0.04) enters only as a score-function reward, so it is
-            inactive in stage 1 (no score-function term) -- results/ for Qwen3-1.7B, runs/backbones/<model>/ otherwise
-  anchored  + the pathwise token-level KL anchor on the rationales (--kl-tokens 0.04) in both stages:
-            runs/anchored/<model>/ (scripts/plan_anchored.py); <px>_warm400_kt<w>_seed<s> = stage 1 with anchor weight w
-The recipe-independent baselines (base, SFT+TS, GRPO+TS, RFT+KL+TS) come from the old directories.
+  old   the paper's stage 1 / two-stage: the KL term (beta 0.04) enters only as a score-function reward, so it is
+        inactive in stage 1 (no score-function term) -- results/ for Qwen3-1.7B, runs/backbones/<model>/ otherwise
+  0.01  main recipe: + the pathwise token-level KL anchor on the rationales (--kl-tokens 0.01) in both stages,
+        runs/anchored01/<model>/ (scripts/plan_anchored.py --recipe a01)
+  0.04  the same with anchor weight 0.04 (the first anchored rerun, now the anchor-weight ablation), runs/anchored/<model>/;
+        <px>_warm400_kt0.0025_seed<s> there = stage 1 with anchor weight 0.0025
+The recipe-independent baselines (base, SFT+TS, GRPO+TS, RFT+KL+TS) come from the old directories. Runs listed in
+EXCLUDED (collapsed baselines, decided 2026-10-11) are left out of every mean and test and named in the section.
 A paired test uses only the seeds both arms have; per-item values are averaged over those seeds first (as in
 final_tables), so the p-values reflect item sampling, not seed-to-seed variation.
 """
@@ -39,9 +42,14 @@ def old_dir(model):
     return ROOT / "results" if model == "qwen3-1.7b" else ROOT / "runs/backbones" / model
 
 
+# runs left out of every mean and paired test, with the reason (decided with the user, 2026-10-11)
+EXCLUDED = {"runs/backbones/smollm3-3b/gv_rftkl_seed17.json":
+            "SmolLM3 GSM8K-V RFT+KL seed 17 塌缩（推理只剩 2 个 token，准确率 50%），按决定排除；seed 23/29 正常"}
+
+
 def arms(model, px):
     """(key, label, directory, file stem -- '{s}' marks the seed; the base run has none --, kind)"""
-    old, new = old_dir(model), ROOT / "runs/anchored" / model
+    old, new, a04 = old_dir(model), ROOT / "runs/anchored01" / model, ROOT / "runs/anchored" / model
     base = "gv_base_eval_full" if px == "gv" else "mp_base_eval"
     return [
         ("base", "base（零样本推理）", old, base, "teacher"),
@@ -54,10 +62,15 @@ def arms(model, px):
         ("anc_old", "旧 s1 + 只有噪声无奖励", old, f"{px}_fork_anchor_seed{{s}}", "teacher"),
         ("fgrpo_old", "旧 s1 + GRPO", old, f"{px}_fork_grpo_seed{{s}}", "teacher"),
         ("ce_old", "旧 stage 1（log score）", old, f"{px}_ce_seed{{s}}", "teacher"),
+        ("s1_04", "锚点 0.04 stage 1", a04, f"{px}_warm400_seed{{s}}", "teacher"),
+        ("rl_04", "锚点 0.04 两阶段", a04, f"{px}_fork_rl_seed{{s}}", "teacher"),
+        ("rlnoanc_04", "锚点 0.04 s1 + RLCD-RL（stage 2 无锚点）", a04, f"{px}_fork_rlnoanc_seed{{s}}", "teacher"),
+        ("ro_04", "锚点 0.04 s1 + 只训读出", a04, f"{px}_fork_ro_seed{{s}}", "teacher"),
+        ("anc_04", "锚点 0.04 s1 + 只有噪声无奖励", a04, f"{px}_fork_anchor_seed{{s}}", "teacher"),
+        ("fgrpo_04", "锚点 0.04 s1 + GRPO", a04, f"{px}_fork_grpo_seed{{s}}", "teacher"),
+        ("ce_04", "锚点 0.04 stage 1（log score）", a04, f"{px}_ce_seed{{s}}", "teacher"),
+        ("s1_0025", "锚点 0.0025 stage 1", a04, f"{px}_warm400_kt0.0025_seed{{s}}", "teacher"),
         ("s1", "stage 1", new, f"{px}_warm400_seed{{s}}", "teacher"),
-        ("s1_kt01", "stage 1（锚点 0.01）", new, f"{px}_warm400_kt0.01_seed{{s}}", "teacher"),
-        ("s1_kt0025", "stage 1（锚点 0.0025）", new, f"{px}_warm400_kt0.0025_seed{{s}}", "teacher"),
-        ("rl_kt01", "两阶段（锚点 0.01）", new, f"{px}_fork_rl_kt0.01_seed{{s}}", "teacher"),
         ("rl", "两阶段（s1 + RLCD-RL）", new, f"{px}_fork_rl_seed{{s}}", "teacher"),
         ("rlnoanc", "s1 + RLCD-RL（stage 2 无锚点）", new, f"{px}_fork_rlnoanc_seed{{s}}", "teacher"),
         ("ro", "s1 + 只训读出", new, f"{px}_fork_ro_seed{{s}}", "teacher"),
@@ -69,16 +82,12 @@ def arms(model, px):
 
 # (first, second, question): delta = first - second
 PAIRS = [
-    ("s1", "s1_old", "stage 1：新配方 vs 旧配方"),
-    ("rl", "rl_old", "两阶段：新配方 vs 旧配方"),
-    ("s1_kt01", "s1", "stage 1：锚点 0.01 vs 0.04"),
-    ("s1_kt01", "s1_old", "stage 1：锚点 0.01 vs 无锚点（旧）"),
-    ("s1_kt0025", "s1", "stage 1：锚点 0.0025 vs 0.04"),
-    ("s1_kt0025", "s1_old", "stage 1：锚点 0.0025 vs 无锚点（旧）"),
-    ("s1_kt0025", "s1_kt01", "stage 1：锚点 0.0025 vs 0.01"),
-    ("rl_kt01", "rl", "两阶段：锚点 0.01 vs 0.04"),
-    ("rl_kt01", "rl_old", "两阶段：锚点 0.01 vs 无锚点（旧）"),
-    ("rl_kt01", "s1_kt01", "stage 2 增益（锚点 0.01）"),
+    ("s1", "s1_old", "stage 1：新配方（0.01）vs 旧配方（无锚点）"),
+    ("rl", "rl_old", "两阶段：新配方（0.01）vs 旧配方（无锚点）"),
+    ("s1", "s1_04", "stage 1：锚点 0.01 vs 0.04"),
+    ("rl", "rl_04", "两阶段：锚点 0.01 vs 0.04"),
+    ("s1_0025", "s1", "stage 1：锚点 0.0025 vs 0.01"),
+    ("s1_04", "s1_old", "stage 1：锚点 0.04 vs 无锚点（旧）"),
     ("rl", "s1", "stage 2（RLCD-RL）有没有增益"),
     ("rl", "rlnoanc", "stage 2 里锚点的作用"),
     ("rl", "ro", "RLCD-RL vs 只训读出续训"),
@@ -94,6 +103,10 @@ PAIRS = [
     ("s1", "grpo", "stage 1 vs GRPO+TS"),
     ("s1", "rftkl", "stage 1 vs RFT+KL+TS"),
     ("s1", "base", "stage 1 vs base"),
+    ("rl_04", "s1_04", "锚点 0.04：stage 2 增益"),
+    ("rl_04", "ro_04", "锚点 0.04：RLCD-RL vs 只训读出续训"),
+    ("rl_04", "anc_04", "锚点 0.04：RLCD-RL vs 只有噪声无奖励"),
+    ("rl_04", "fgrpo_04", "锚点 0.04：RLCD-RL vs GRPO 续训"),
 ]
 
 
@@ -123,6 +136,8 @@ def score_arm(directory, stem, kind, n_test):
     """{readout: [(seed, raw, ts, T)]}, drift stats per seed, the files used"""
     out, drift, used = {}, [], []
     for s, p in run_files(directory, stem):
+        if str(p.relative_to(ROOT)) in EXCLUDED:
+            continue
         r = load(p, kind) if p.exists() else None
         if r is None:
             continue
@@ -196,6 +211,8 @@ def section(model, label, task, px, tname, n_test):
             scored[key], drift[key] = res, dr
             files += used
     lines = [f"### {label} · {tname}", ""]
+    notes = [why for f, why in EXCLUDED.items() if f.startswith(f"runs/backbones/{model}/{px}_")]
+    lines += [f"注：{x}。" for x in notes] + ([""] if notes else [])
     if not scored:
         return lines + ["（还没有结果）", ""], {}, {}, []
     lines += ["| 组 | seeds | 读出 | 准确率 % | Brier | ECE | AURC | 自动化覆盖@5% | oracle 覆盖@5% | 原始 T |",
@@ -246,9 +263,10 @@ def section(model, label, task, px, tname, n_test):
 
 
 def summary_rows(results):
-    head = ["| 模型 · 任务 | seeds（新 s1 / 新两阶段） | 新 s1 − 旧 s1 ΔAURC | stage 2 增益（两阶段 − s1）ΔAURC | "
-            "两阶段 vs SFT+TS ΔBrier / ΔAURC | 两阶段 vs GRPO+TS ΔBrier / ΔAURC | 两阶段 vs RFT+KL+TS ΔBrier / ΔAURC |",
-            "|---|---|---|---|---|---|---|"]
+    head = ["| 模型 · 任务 | seeds（s1 / 两阶段） | s1：0.01 − 0.04 ΔAURC | s1：新 − 旧 ΔAURC | "
+            "stage 2 增益（两阶段 − s1）ΔAURC | 两阶段 vs SFT+TS ΔBrier / ΔAURC | 两阶段 vs GRPO+TS ΔBrier / ΔAURC | "
+            "两阶段 vs RFT+KL+TS ΔBrier / ΔAURC |",
+            "|---|---|---|---|---|---|---|---|"]
     rows = []
     for (label, tname), (metrics, pairs) in results.items():
         def one(a, b, both=False):
@@ -259,7 +277,8 @@ def summary_rows(results):
             return f"{c['dbrier'][0]:+.4f}{star(c['dbrier'][3])} / {u}" if both else u
         s1 = metrics.get("s1/one", {}).get("seeds", [])
         rl = metrics.get("rl/one", {}).get("seeds", [])
-        rows.append(f"| {label} · {tname} | {seeds_str(s1)} / {seeds_str(rl)} | {one('s1', 's1_old')} | {one('rl', 's1')} | "
+        rows.append(f"| {label} · {tname} | {seeds_str(s1)} / {seeds_str(rl)} | {one('s1', 's1_04')} | {one('s1', 's1_old')} | "
+                    f"{one('rl', 's1')} | "
                     f"{one('rl', 'sft', True)} | {one('rl', 'grpo', True)} | {one('rl', 'rftkl', True)} |")
     return head + rows
 
@@ -355,8 +374,9 @@ def main():
             out_json[key] = dict(metrics=c["metrics"], pairs=c["pairs"])
     head = ["# 多 backbone 结果汇总（锚点重跑）", "",
             f"生成时间 {time.strftime('%Y-%m-%d %H:%M')}。所有数字都在 dev 上做过温度缩放（TS）；每组多个 seed 时给出 "
-            "均值±标准差。\"one\" = 单条推理的读出，\"mix\" = 4 条推理混合的读出。\"新\" = 加 token 级 KL 锚点的配方"
-            "（runs/anchored），\"旧\" = 论文原配方（stage 1 里 KL 项不起作用）。配对检验只用两组共有的 seed，"
+            "均值±标准差。\"one\" = 单条推理的读出，\"mix\" = 4 条推理混合的读出。不带前缀的 stage 1 / 两阶段 / 对照"
+            "都是主配方：token 级 KL 锚点 0.01（runs/anchored01，2026-10-11 定）；\"锚点 0.04\" 是第一次锚点重跑"
+            "（runs/anchored），现作锚点强度消融；\"旧\" = 论文原配方（stage 1 里 KL 项不起作用）。配对检验只用两组共有的 seed，"
             "p 值反映的是测试题目的抽样误差，不包含 seed 间的差异；只有一个 seed 时要谨慎解读。", ""]
     head += progress()
     head += ["## 总览（单条推理读出；Δ 为负 = 前者更好；* p<0.05，** p<0.01）", ""] + summary_rows(summary) + [""]
