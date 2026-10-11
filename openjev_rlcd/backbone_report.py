@@ -136,7 +136,7 @@ def score_arm(directory, stem, kind, n_test):
     """{readout: [(seed, raw, ts, T)]}, drift stats per seed, the files used"""
     out, drift, used = {}, [], []
     for s, p in run_files(directory, stem):
-        if str(p.relative_to(ROOT)) in EXCLUDED:
+        if os.path.relpath(os.path.abspath(p), ROOT) in EXCLUDED:  # abspath: links are not followed
             continue
         r = load(p, kind) if p.exists() else None
         if r is None:
