@@ -31,6 +31,9 @@ QDIR = Path(os.environ.get("QDIR", "runs/queue"))
 # model-name substring that identifies a running process of each offload class (overridable for tests)
 RES_MODEL = dict(kv.split("=") for kv in os.environ.get("QUEUE_RES_MODELS", "phi=Phi-4-mini,smol=SmolLM3").split(","))
 MIN_FREE_GB = {"smol": 45, "phi": 55}
+# at most one offload job (either class) at a time: Phi + SmolLM3 together exhausted host memory and swap on
+# 2026-10-11 (the Phi run and its worker died at 22:20); QUEUE_OFFLOAD_EXCLUSIVE=0 allows one of each again
+OFFLOAD_EXCLUSIVE = os.environ.get("QUEUE_OFFLOAD_EXCLUSIVE", "1") == "1"
 # a bash process running one of the experiment scripts (not e.g. "bash -c <command line mentioning a model>")
 SCRIPT = re.compile(r"(\S*/)?bash\s+(\S*/)?(run_task|run|backbone|two_stage|baselines|ablations|worker)\.sh(\s|$)")  # MemAvailable needed before an offload job may start
 MAX_FAILS = 2
@@ -137,6 +140,19 @@ def job_pid(job):
     return None
 
 
+def swap_used_frac():
+    m = {}
+    for line in open("/proc/meminfo"):
+        k, v = line.split(":", 1)
+        m[k] = int(v.split()[0])
+    return 1 - m["SwapFree"] / m["SwapTotal"] if m.get("SwapTotal") else 0.0
+
+
+# an offload job starts only while swap is mostly free: above ~90 % swap use systemd-oomd kills the tmux pane with the
+# most swap (the Phi run and its worker, twice on 2026-10-11/12)
+MAX_SWAP_USED = float(os.environ.get("QUEUE_MAX_SWAP_USED", "0.5"))
+
+
 def mem_available_gb():
     for line in open("/proc/meminfo"):
         if line.startswith("MemAvailable:"):
@@ -199,6 +215,9 @@ def pop(gpu, worker):
             ok = j["needs"] == "-" or complete(j["needs"])
             if j["res"] in MIN_FREE_GB:
                 ok = ok and j["res"] not in busy and free_gb >= MIN_FREE_GB[j["res"]]
+                if OFFLOAD_EXCLUSIVE:
+                    ok = ok and not (busy & set(MIN_FREE_GB))
+                ok = ok and swap_used_frac() < MAX_SWAP_USED
             if chosen is None and ok:
                 chosen = j
                 continue
