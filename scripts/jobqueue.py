@@ -149,8 +149,18 @@ def swap_used_frac():
 
 
 # an offload job starts only while swap is mostly free: above ~90 % swap use systemd-oomd kills the tmux pane with the
-# most swap (the Phi run and its worker, twice on 2026-10-11/12)
+# most swap (the Phi run and its worker, twice on 2026-10-11/12). Swap already held by idle processes (bazel servers,
+# editor) stays flat while RAM has room (2026-10-15: 41G at so=0 under a running Phi job), so up to MAX_SWAP_USED_HARD
+# is accepted when the job would still leave SWAP_RAM_MARGIN_GB of MemAvailable unused.
 MAX_SWAP_USED = float(os.environ.get("QUEUE_MAX_SWAP_USED", "0.5"))
+MAX_SWAP_USED_HARD = float(os.environ.get("QUEUE_MAX_SWAP_USED_HARD", "0.75"))
+SWAP_RAM_MARGIN_GB = float(os.environ.get("QUEUE_SWAP_RAM_MARGIN_GB", "25"))
+
+
+def swap_ok(spare_gb):
+    """spare_gb: MemAvailable left after the job's own MIN_FREE_GB."""
+    used = swap_used_frac()
+    return used < MAX_SWAP_USED or (used < MAX_SWAP_USED_HARD and spare_gb >= SWAP_RAM_MARGIN_GB)
 
 
 def mem_available_gb():
@@ -217,7 +227,7 @@ def pop(gpu, worker):
                 ok = ok and j["res"] not in busy and free_gb >= MIN_FREE_GB[j["res"]]
                 if OFFLOAD_EXCLUSIVE:
                     ok = ok and not (busy & set(MIN_FREE_GB))
-                ok = ok and swap_used_frac() < MAX_SWAP_USED
+                ok = ok and swap_ok(free_gb - MIN_FREE_GB[j["res"]])
             if chosen is None and ok:
                 chosen = j
                 continue
