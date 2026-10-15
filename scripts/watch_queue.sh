@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Watch the GPU job queue; exit (so whoever waits on it wakes up) on the first event: a queue job ends / fails / a
 # worker goes IDLE, free disk < 80G, a queue tmux session is gone, a running job's log is silent > 90 min, or a GPU
-# has had no compute process for ~10 min (safety net against scheduler bugs). Prints a short status report.
+# has had no compute process for ~10 min, or no queue job has run for ~10 min while jobs are queued (safety nets
+# against scheduler bugs). Prints a short status report.
 #   [IGNORE_IDLE="1"] bash scripts/watch_queue.sh     # IGNORE_IDLE: GPU indices whose idleness is expected
 cd "$(dirname "$0")/.." || exit 1
 QS=runs/queue/status.txt
@@ -9,6 +10,7 @@ q0=$(wc -l < "$QS")
 # GPU busy test shared with the queue workers (works with or without NVML)
 eval "$(sed -n '/^gpu_busy_nonvml()/,/^}/p; /^gpu_busy()/,/^}/p' scripts/queue_worker.sh)"
 declare -A idle=([0]=0 [1]=0)
+stalled=0
 event=""
 while [ -z "$event" ]; do
   sleep 120
@@ -33,6 +35,10 @@ while [ -z "$event" ]; do
     case " ${IGNORE_IDLE:-} " in *" $g "*) continue ;; esac  # GPUs expected to idle (e.g. only offload jobs left)
     [ "${idle[$g]}" -ge 5 ] && [ ! -f runs/queue/STOP.v2 ] && event="$event; GPU$g idle ~$((idle[$g] * 2)) min"
   done
+  # scheduler-level net, independent of GPU use by other projects: nothing running while jobs are queued
+  if [ -z "$(awk 'NF' runs/queue/running.txt)" ] && grep -q '^[^#[:space:]]' runs/queue/queue.txt; then
+    stalled=$((stalled + 1)); else stalled=0; fi
+  [ "$stalled" -ge 5 ] && [ ! -f runs/queue/STOP.v2 ] && event="$event; queue stalled: nothing running for ~$((stalled * 2)) min"
 done
 date
 echo "EVENT: ${event#; }"
