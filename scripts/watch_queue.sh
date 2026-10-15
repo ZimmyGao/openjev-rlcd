@@ -3,7 +3,8 @@
 # worker goes IDLE, free disk < 80G, a queue tmux session is gone, a running job's log is silent > 90 min, or a GPU
 # has had no compute process for ~10 min, or no queue job has run for ~10 min while jobs are queued (safety nets
 # against scheduler bugs). Prints a short status report.
-#   [IGNORE_IDLE="1"] bash scripts/watch_queue.sh     # IGNORE_IDLE: GPU indices whose idleness is expected
+#   [IGNORE_IDLE="1"] [SESSIONS="ojq0b ..."] bash scripts/watch_queue.sh   # IGNORE_IDLE: GPUs expected to idle;
+#   SESSIONS: tmux sessions that must stay up (default: both workers, report loop, finisher, watchdog)
 cd "$(dirname "$0")/.." || exit 1
 QS=runs/queue/status.txt
 q0=$(wc -l < "$QS")
@@ -20,7 +21,7 @@ while [ -z "$event" ]; do
   avail=$(df --output=avail -BG / | tail -1 | tr -dc 0-9)
   [ "$avail" -lt 80 ] && event="$event; disk low (${avail}G)"
   if [ ! -f runs/queue/STOP.v2 ]; then
-    for s in ojq0b ojq1b ojreport ojfinish ojwatchdog; do
+    for s in ${SESSIONS:-ojq0b ojq1b ojreport ojfinish ojwatchdog}; do
       tmux has-session -t "=$s" 2>/dev/null || event="$event; session $s gone"
     done
   fi
