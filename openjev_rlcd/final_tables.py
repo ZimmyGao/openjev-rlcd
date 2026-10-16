@@ -49,13 +49,19 @@ def set_results(path):
     R = Path(path)
 
 
-def load_runs(files, kind, readout):
+DROPPED = {}  # run file -> why it was left out (evaluation.collapsed)
+
+
+def load_runs(files, kind, readout, keep_collapsed=False):
     out = []
     for f in files:
         p = R / f
         if not p.exists():
             continue
         d = json.loads(p.read_text())
+        if not keep_collapsed and S.collapsed(d.get("test", {}).get("rationale")):
+            DROPPED[f] = "collapsed rationales (evaluation.collapsed)"
+            continue
         if kind == "direct":
             out.append(S.scored(d["test_dists"], d["dev_dists"], d["config"]["seed"]))
         elif "dev_dists" in d and "dists" in d.get("test", {}):
@@ -107,6 +113,10 @@ def main():
             db, da, du = S.paired(x["brier"], y["brier"]), S.paired(x["correct"], y["correct"]), S.paired_aurc(x, y)
             print(f"  {ka:26s} vs {kb:24s}: dBrier {db[0]:+.4f} [{db[1]:+.4f},{db[2]:+.4f}] p={db[3]:.1e}  "
                   f"dAcc {da[0]:+.3f} [{da[1]:+.3f},{da[2]:+.3f}] p={da[3]:.1e}  dAURC {du[0]:+.3f} p~{du[3]:.1e}")
+    if DROPPED:
+        print("\nLeft out of every row and test above:")
+        for f, why in sorted(DROPPED.items()):
+            print(f"  {f}: {why}")
 
 
 if __name__ == "__main__":

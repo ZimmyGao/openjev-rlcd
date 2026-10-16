@@ -112,3 +112,11 @@ def test_saturated_items_are_ranked_by_their_own_margin():
     assert rank[2] > rank[1] > rank[0] > rank[3]
     assert rank_key([0.9, 0.9], [3.0, 3.0])[0] == rank_key([0.9, 0.9], [3.0, 3.0])[1]  # a genuine tie stays a tie
     assert math.isfinite(m[2])
+
+
+def test_collapse_rule():
+    assert S.collapsed(dict(mean_rationale_tokens=2.0, length_limit_rate=0.0, repetition_ratio=0.0))  # empty rationales
+    assert S.collapsed(dict(mean_rationale_tokens=320.0, length_limit_rate=1.0, repetition_ratio=0.99))  # a loop
+    assert not S.collapsed(dict(mean_rationale_tokens=230.0, length_limit_rate=0.74, repetition_ratio=0.43))  # long, fine
+    assert not S.collapsed(dict(mean_rationale_tokens=11.7, length_limit_rate=0.0, repetition_ratio=0.03))  # short, kept
+    assert not S.collapsed(None) and not S.collapsed({})  # direct-answer models have no rationales

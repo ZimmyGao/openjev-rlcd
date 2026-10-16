@@ -20,10 +20,21 @@ Results with Qwen3-1.7B (3 seeds, single query, temperature-scaled on dev):
 
 | | GSM8K-Verify acc / Brier / AURC / Cov@5% | MMLU-Pro acc / Brier / AURC / Cov@20% |
 |---|---|---|
-| SFT + TS | 70.4 / 0.382 / 0.174 / 6% | 42.3 / 0.711 / 0.386 / 16% |
-| RFT/STaR + KL + TS | 91.4 / 0.160 / 0.075 / 12% | 40.9 / 0.761 / 0.493 / 0% |
-| GRPO + KL + TS | 91.8 / 0.150 / 0.061 / 19% | 42.4 / 0.753 / 0.481 / 0% |
+| SFT + TS | 70.4 / 0.382 / 0.174 / 5% | 42.3 / 0.711 / 0.386 / 16% |
+| RFT/STaR + KL + TS | 91.4 / 0.160 / 0.073 / 11% | 40.9 / 0.761 / 0.494 / 0% |
+| GRPO + KL + TS | 91.8 / 0.150 / 0.067 / 10% | 42.4 / 0.753 / 0.481 / 0% |
 | **RLCD two-stage** | **92.2 / 0.135 / 0.034 / 81%** | **47.7 / 0.658 / 0.304 / 28%** |
+
+**Changes since arXiv v1** (2026-10-16). AURC and Cov@ε used to rank items of equal confidence by their position in
+the test set; most such ties come from the 1e-12 probability floor before temperature scaling, which makes every
+saturated readout equally confident. Items are now ranked by temperature-scaled confidence, ties broken by the model's
+own log-probability margin, and items that still tie share their group's error rate (`openjev_rlcd/metrics.py`,
+`evaluation.py`). This mainly moves GSM8K-Verify numbers of saturated baselines (GRPO AURC 0.061 → 0.067, Cov@5%
+19% → 10%). RLCD's accuracy, Brier and AURC are unchanged and its Cov@5% moves by less than one point (two-stage
+81.1% → 80.8%); the only MMLU-Pro change is RFT+KL AURC 0.493 → 0.494. Runs whose rationales collapse
+(`evaluation.collapsed`) are now excluded from every GSM8K-Verify / MMLU-Pro table and test (`final_tables.py`); in the
+paper this removes RFT/STaR without KL on MMLU-Pro (all three seeds). Collapses that are themselves results (the
+paper's Figure 1 and ChaosNLI table) are still reported.
 
 The paper also covers the negative results: the mixture objective rewards disagreeing
 rationales, the per-rationale objective switches reasoning off without a KL anchor,

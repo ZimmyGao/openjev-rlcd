@@ -44,9 +44,9 @@ def old_dir(model):
 
 
 # runs left out of every mean and paired test, with the reason (decided with the user, 2026-10-11 and 2026-10-15).
-# Rule, the same for every arm: the policy's test rationales have collapsed -- mean <= 5 tokens (no reasoning left) or
-# every rationale at the length limit with repetition >= 0.9 (a loop). A scan of all 228 rationale runs (2026-10-16)
-# finds exactly these five, all RFT+KL+TS.
+# Rule (evaluation.collapsed, also applied by final_tables and to any run missing here): the policy's test rationales
+# have collapsed -- mean <= 5 tokens or every rationale at the length limit with repetition >= 0.9. A scan of all 228
+# rationale runs (2026-10-16) finds exactly these five, all RFT+KL+TS.
 _SMOL_MP = "SmolLM3 MMLU-Pro RFT+KL 三个 seed 全部塌缩（推理只剩 2 个 token），按决定排除，这一格没有 RFT+KL+TS"
 EXCLUDED = {"runs/backbones/smollm3-3b/gv_rftkl_seed17.json":
             "SmolLM3 GSM8K-V RFT+KL seed 17 塌缩（推理只剩 2 个 token，准确率 50%），按决定排除；seed 23/29 正常",
@@ -152,6 +152,9 @@ def score_arm(directory, stem, kind, n_test):
         if r is None:
             continue
         ros, cseed, dr = r
+        if dr and S.collapsed(dr):  # the same rule for runs not (yet) named in EXCLUDED
+            print(f"warning: {p} meets the collapse rule but is not in EXCLUDED; left out")
+            continue
         used.append(p)
         for ro, (test, dev) in ros.items():
             raw, ts, temp = S.scored(test[:n_test], dev, cseed)

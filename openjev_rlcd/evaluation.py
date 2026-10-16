@@ -33,6 +33,16 @@ def lists(z, items):
     return [row[:len(it["q"])] for row, it in zip(z.softmax(-1).tolist(), items)]
 
 
+def collapsed(rationale):
+    """the exclusion rule for every arm: the policy's test rationales have collapsed -- mean <= 5 tokens (no reasoning
+    left) or every rationale at the length limit with repetition >= 0.9 (a loop); rationale = the run's test["rationale"]
+    statistics (absent for direct-answer models, which are never excluded)"""
+    if not rationale:
+        return False
+    tokens, limit, rep = (rationale.get(k) for k in ("mean_rationale_tokens", "length_limit_rate", "repetition_ratio"))
+    return (tokens is not None and tokens <= 5) or (limit is not None and rep is not None and limit >= 0.99 and rep >= 0.9)
+
+
 def margins(dists):
     """the model's own log-margin between its two most probable options, from the saved probabilities with only
     exact zeros floored: it orders the saturated items that the 1e-12 floor of padded_logits makes equal"""
