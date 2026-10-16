@@ -120,3 +120,11 @@ def test_collapse_rule():
     assert not S.collapsed(dict(mean_rationale_tokens=230.0, length_limit_rate=0.74, repetition_ratio=0.43))  # long, fine
     assert not S.collapsed(dict(mean_rationale_tokens=11.7, length_limit_rate=0.0, repetition_ratio=0.03))  # short, kept
     assert not S.collapsed(None) and not S.collapsed({})  # direct-answer models have no rationales
+
+
+def test_paired_aurc_p_value_is_at_most_one():
+    rng = np.random.default_rng(3)
+    conf = rng.choice([0.6, 0.9, 1.0], size=50)
+    x = dict(brier=np.zeros(50), seeds=[(conf, (rng.random(50) > conf).astype(float))])
+    d, lo, hi, p = S.paired_aurc(x, x, n=200)
+    assert d == 0 and lo == hi == 0 and p == 1.0  # identical arms: every bootstrap difference is exactly 0

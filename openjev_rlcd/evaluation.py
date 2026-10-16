@@ -116,7 +116,8 @@ def paired_aurc(x, y, n=4000, seed=0):
     full = np.arange(m)[None]
     d = aurc_boot(x["seeds"], full)[0] - aurc_boot(y["seeds"], full)[0]
     boot = aurc_boot(x["seeds"], idx) - aurc_boot(y["seeds"], idx)
-    return d, np.percentile(boot, 2.5), np.percentile(boot, 97.5), 2 * min((boot >= 0).mean(), (boot <= 0).mean())
+    p = min(1.0, 2 * min((boot >= 0).mean(), (boot <= 0).mean()))  # capped: identical arms give boot == 0 everywhere
+    return d, np.percentile(boot, 2.5), np.percentile(boot, 97.5), p
 
 
 def paired(a, b, n=20000, seed=0):
