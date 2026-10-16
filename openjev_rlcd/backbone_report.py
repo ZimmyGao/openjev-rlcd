@@ -13,7 +13,8 @@ Recipes (file names as in scripts/two_stage.sh / scripts/backbone.sh):
   0.04  the same with anchor weight 0.04 (the first anchored rerun, now the anchor-weight ablation), runs/anchored/<model>/;
         <px>_warm400_kt0.0025_seed<s> there = stage 1 with anchor weight 0.0025
 The recipe-independent baselines (base, SFT+TS, GRPO+TS, RFT+KL+TS) come from the old directories. Runs listed in
-EXCLUDED (collapsed baselines, decided 2026-10-11) are left out of every mean and test and named in the section.
+EXCLUDED (collapsed runs, see the rule there; decided 2026-10-11 / 2026-10-15) are left out of every mean and test and
+named in the section.
 A paired test uses only the seeds both arms have; per-item values are averaged over those seeds first (as in
 final_tables), so the p-values reflect item sampling, not seed-to-seed variation.
 """
@@ -42,9 +43,18 @@ def old_dir(model):
     return ROOT / "results" if model == "qwen3-1.7b" else ROOT / "runs/backbones" / model
 
 
-# runs left out of every mean and paired test, with the reason (decided with the user, 2026-10-11)
+# runs left out of every mean and paired test, with the reason (decided with the user, 2026-10-11 and 2026-10-15).
+# Rule, the same for every arm: the policy's test rationales have collapsed -- mean <= 5 tokens (no reasoning left) or
+# every rationale at the length limit with repetition >= 0.9 (a loop). A scan of all 228 rationale runs (2026-10-16)
+# finds exactly these five, all RFT+KL+TS.
+_SMOL_MP = "SmolLM3 MMLU-Pro RFT+KL 三个 seed 全部塌缩（推理只剩 2 个 token），按决定排除，这一格没有 RFT+KL+TS"
 EXCLUDED = {"runs/backbones/smollm3-3b/gv_rftkl_seed17.json":
-            "SmolLM3 GSM8K-V RFT+KL seed 17 塌缩（推理只剩 2 个 token，准确率 50%），按决定排除；seed 23/29 正常"}
+            "SmolLM3 GSM8K-V RFT+KL seed 17 塌缩（推理只剩 2 个 token，准确率 50%），按决定排除；seed 23/29 正常",
+            "runs/backbones/smollm3-3b/mp_rftkl_seed17.json": _SMOL_MP,
+            "runs/backbones/smollm3-3b/mp_rftkl_seed23.json": _SMOL_MP,
+            "runs/backbones/smollm3-3b/mp_rftkl_seed29.json": _SMOL_MP,
+            "runs/backbones/phi-4-mini/gv_rftkl_seed29.json":
+            "Phi-4-mini GSM8K-V RFT+KL seed 29 塌缩（每条推理都写到 320 token 上限、重复率 0.99），按决定排除；seed 17/23 正常"}
 
 
 def arms(model, px):
@@ -154,7 +164,7 @@ def score_arm(directory, stem, kind, n_test):
 def pack(runs):
     ts = [r[2] for r in runs]
     return dict(brier=np.mean([t["per_item_brier"] for t in ts], 0), correct=np.mean([t["per_item_correct"] for t in ts], 0),
-                seeds=[(np.array(t["per_item_conf"]), 1 - np.array(t["per_item_correct"], float)) for t in ts])
+                seeds=[(np.array(t["per_item_rank"]), 1 - np.array(t["per_item_correct"], float)) for t in ts])
 
 
 def common(ra, rb):
@@ -211,7 +221,7 @@ def section(model, label, task, px, tname, n_test):
             scored[key], drift[key] = res, dr
             files += used
     lines = [f"### {label} · {tname}", ""]
-    notes = [why for f, why in EXCLUDED.items() if f.startswith(f"runs/backbones/{model}/{px}_")]
+    notes = list(dict.fromkeys(why for f, why in EXCLUDED.items() if f.startswith(f"runs/backbones/{model}/{px}_")))
     lines += [f"注：{x}。" for x in notes] + ([""] if notes else [])
     if not scored:
         return lines + ["（还没有结果）", ""], {}, {}, []
@@ -355,7 +365,8 @@ def main():
         cache = {} if args.no_cache else json.loads(cache_path.read_text())
     except (OSError, ValueError):
         cache = {}
-    code = Path(__file__).stat().st_mtime_ns
+    # cached sections are reused only while this file and the scoring code (evaluation.py, metrics.py) are unchanged
+    code = [Path(f).stat().st_mtime_ns for f in (__file__, S.__file__, Path(S.__file__).with_name("metrics.py"))]
     body, summary, out_json = [], {}, {}
     for task, px, tname in TASK_PX:
         S.SPLITS = TASKS[task]["load"]()

@@ -66,7 +66,7 @@ def load_runs(files, kind, readout):
 def pack(runs):
     ts = [r[1] for r in runs]
     return dict(brier=np.mean([t["per_item_brier"] for t in ts], 0), correct=np.mean([t["per_item_correct"] for t in ts], 0),
-                seeds=[(np.array(t["per_item_conf"]), 1 - np.array(t["per_item_correct"], float)) for t in ts])
+                seeds=[(np.array(t["per_item_rank"]), 1 - np.array(t["per_item_correct"], float)) for t in ts])
 
 
 def main():

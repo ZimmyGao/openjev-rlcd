@@ -21,33 +21,56 @@ def fit_temperature(dev_logits, dev_items, seed):
     return float(grid[nll.argmin()])
 
 
-def selective_metrics(items, probs, budgets=(0.1, 0.2)):
+def tie_mean(rows):
+    """rows sorted by their ranking key (first field) -> the risk (last field) of each row replaced by the mean risk of
+    its group of equal keys, i.e. its expected value when the order inside the group is random"""
+    out, i = [], 0
+    while i < len(rows):
+        j = i + 1
+        while j < len(rows) and rows[j][0] == rows[i][0]:
+            j += 1
+        m = sum(r[-1] for r in rows[i:j]) / (j - i)
+        out += [(*r[:-1], m) for r in rows[i:j]]
+        i = j
+    return out
+
+
+def selective_metrics(items, probs, budgets=(0.1, 0.2), rank=None):
     """Decision quality when the model decides alone on its most confident items. Risk of deciding
     item x alone = P(the outcome disagrees with the model's choice) = 1 - q[argmax p]; items are
-    ranked by max p.
+    ranked by max p, or by rank (one sortable key per item, higher = more confident; evaluation.scored
+    breaks ties of max p with the model's own unclamped log-margin). Items with an equal key cannot be
+    ranked against each other: they share their group's mean risk (the expected risk under a random
+    order inside the group), so nothing depends on the order of the items in the test set.
       ece          : 10-bin ECE of max p against that agreement probability
-      aurc         : area under the risk-coverage curve (lower = better)
+      aurc         : area under the risk-coverage curve (lower = better); the expectation over random
+                     orders inside tie groups
       cov@e        : label-free automation -- the largest top-ranked set whose PREDICTED error
-                     mean(1 - max p) is <= e; risk@e is its realized risk (<= e when calibrated)
-      oracle_cov@e : the largest top-ranked set whose REALIZED risk is <= e (ranking quality only)
+                     mean(1 - max p) is <= e; risk@e is its realized risk (<= e when calibrated),
+                     again the expectation over random orders inside tie groups
+      oracle_cov@e : the largest top-ranked set whose (tie-averaged) realized risk is <= e -- ranking
+                     quality only; it may end inside a tie group, i.e. take a random part of it
     """
-    rows = sorted(((max(p), 1 - it["q"][p.index(max(p))]) for it, p in zip(items, probs)), key=lambda r: -r[0])
+    conf = [max(p) for p in probs]
+    key = conf if rank is None else list(rank)
+    rows = tie_mean(sorted(((k, c, 1 - it["q"][p.index(c)]) for k, c, it, p in zip(key, conf, items, probs)),
+                           key=lambda r: -r[0]))
     n = len(rows)
     bins = [[] for _ in range(10)]
-    for c, r in rows:
+    for _, c, r in rows:
         bins[min(9, int(c * 10))].append((c, 1 - r))
     out = dict(ece=sum(len(b) / n * abs(sum(c for c, _ in b) - sum(a for _, a in b)) / len(b) for b in bins if b))
     pred_cum = real_cum = aurc = 0.0
     sc = {e: (0, 0.0) for e in budgets}
     oracle = {e: 0 for e in budgets}
-    for k, (c, r) in enumerate(rows, 1):
+    for k, (_, c, r) in enumerate(rows, 1):
         pred_cum += 1 - c
         real_cum += r
         aurc += real_cum / k
         for e in budgets:
             if pred_cum / k <= e:
                 sc[e] = (k, real_cum / k)
-            if real_cum / k <= e:
+            if real_cum <= e * k + 1e-9:  # tie-averaged risks are not integers: compare with a tolerance
                 oracle[e] = k
     out["aurc"] = aurc / n
     for e in budgets:
