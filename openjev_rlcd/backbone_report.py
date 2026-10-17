@@ -139,6 +139,9 @@ def load(path, kind):
     if "dists" not in t or not isinstance(d.get("dev_dists"), dict):
         return None
     drift = dict(forced=t.get("forced_marker_rate"), **t.get("rationale", {}))
+    if kind == "verbal":  # RLCR: the stated answer stays the decision (S.verbal_decision); single query only
+        return ({"single": ([S.verbal_decision(p) for p in t["dists"]["single"]],
+                            [S.verbal_decision(p) for p in d["dev_dists"]["single"]])}, d["config"]["seed"], drift)
     return {r: (t["dists"][r], d["dev_dists"][r]) for r in ("single", "mixture")}, d["config"]["seed"], drift
 
 

@@ -80,3 +80,13 @@ def test_confidence_lines_and_rlcr_readout(monkeypatch):
     rows = [(rat.tok(train.prompt(tok, items[0], "gsm8kv", confidence=True))["input_ids"], [11, 12], True)]
     (toks, q), = rat.confidences(model, rows, [1], sample=True)
     assert 0 < len(toks) <= train.CONF_MAX_TOKENS and (q is None or 0 <= q <= 1)
+
+
+def test_verbal_decision_keeps_the_stated_answer():
+    from openjev_rlcd.evaluation import verbal_decision
+    p = verbal_dist(0.0, 3, 10)  # "Confidence: 0" on option 3: every other option gets 1/9
+    q = verbal_decision(p)
+    assert q.index(max(q)) == 3 and math.isclose(sum(q), 1.0) and q[3] > 0.1 > q[0]
+    assert verbal_decision(verbal_dist(0.6, 3, 10)) == verbal_dist(0.6, 3, 10)  # C >= 1/K: unchanged
+    assert verbal_decision([0.2, 0.8]) == [0.2, 0.8]  # K = 2 is exact: the other answer is the decision
+    assert verbal_decision([0.25] * 4) == [0.25] * 4

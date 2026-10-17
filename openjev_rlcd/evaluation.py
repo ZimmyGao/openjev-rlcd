@@ -33,6 +33,24 @@ def lists(z, items):
     return [row[:len(it["q"])] for row, it in zip(z.softmax(-1).tolist(), items)]
 
 
+def verbal_decision(p):
+    """RLCR's saved readout -- its stated confidence C on its stated answer A, 1 - C spread evenly over the other options
+    (train.verbal_dist) -- with A kept as the decision. With K > 2 options and C < 1/K the spread mass would make an
+    arbitrary option the argmax (all unstated options tie), so C is raised to just above 1/K; A is the one option whose
+    value differs from the others. With K = 2 the readout is exact (C on A, 1 - C on the only other answer) and kept."""
+    k = len(p)
+    if k <= 2 or len(set(p)) == 1:
+        return list(p)
+    counts = {}
+    for x in p:
+        counts[x] = counts.get(x, 0) + 1
+    odd = [i for i, x in enumerate(p) if counts[x] == 1]
+    if len(odd) != 1 or p[odd[0]] >= 1.0 / k:
+        return list(p)
+    a, c = odd[0], 1.0 / k + 1e-6
+    return [c if j == a else (1 - c) / (k - 1) for j in range(k)]
+
+
 def collapsed(rationale):
     """the exclusion rule for every arm: the policy's test rationales have collapsed -- mean <= 5 tokens (no reasoning
     left) or every rationale at the length limit with repetition >= 0.9 (a loop); rationale = the run's test["rationale"]
