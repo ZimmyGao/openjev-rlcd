@@ -15,6 +15,10 @@ answer key). Objectives (--objective):
            stage 1 (calibrate):  --no-score-function                  (pathwise only)
            stage 2 (reinforce):  --init-checkpoint <stage 1> --sf-coef 0.3 --kl-beta 0.04
   grpo : RLVR -- answer A_i ~ u_i sampled, reward 1[A_i = Y], group-normalized advantage.
+  rloo : the same reward with a leave-one-out baseline and no division by the group's std (RLOO / Dr. GRPO).
+  rlcr : verbalized confidence (RLCR): after A_i ~ u_i the model writes "Confidence: C_i"; reward
+         1[A_i = Y] - (C_i - 1[A_i = Y])^2, group-normalized as in grpo; the stated confidence is the readout
+         (C_i on A_i, the rest spread evenly over the other options).
   rft  : STaR / rejection-sampling fine-tuning on the trajectories whose sampled answer is correct.
 Readouts at evaluation:
   mixture : mean of u_i over M rationales
@@ -29,6 +33,7 @@ import gc
 import json
 import os
 import random
+import re
 import time
 from pathlib import Path
 
@@ -41,7 +46,34 @@ from .offload import OffloadedAdamW, bf16_matmul_weights
 from .tasks import TASKS, prompt
 
 MARKER = "Answer:"
+CONF_PREFIX = "\nConfidence:"  # rlcr: the line the model writes after its answer token
+CONF_MAX_TOKENS = 10
 DEVICE = os.environ.get("OPENJEV_DEVICE", "cuda")  # "cpu" only for smoke tests
+_CONF = re.compile(r"\s*(\d+(?:\.\d*)?|\.\d+)\s*(%?)")
+
+
+def parse_confidence(text):
+    """the probability stated after 'Confidence:' (rlcr): a number in [0, 1], or a percentage ('85%', or a bare
+    number in (1, 100]); None when the text does not start with a number or the number is out of range"""
+    m = _CONF.match(text)
+    if not m:
+        return None
+    v = float(m.group(1))
+    if m.group(2) or v > 1:
+        v /= 100
+    return v if 0 <= v <= 1 else None
+
+
+def verbal_dist(conf, a, k):
+    """the answer distribution of a verbalized confidence: conf on the stated answer a, the rest spread evenly"""
+    return [conf if j == a else (1 - conf) / (k - 1) for j in range(k)]
+
+
+def rlcr_reward(correct, confs):
+    """RLCR reward 1[A = Y] - (C - 1[A = Y])^2 per rationale; an unparseable confidence (None) costs the largest
+    Brier term, 1"""
+    return torch.tensor([c - (1.0 if q is None else (q - c) ** 2) for c, q in zip(correct.tolist(), confs)],
+                        device=correct.device)
 
 
 def _token_logp(lm_head, h, tgt):
@@ -56,24 +88,59 @@ def _token_kl(lm_head, ref_head, h, h_ref):
 
 
 class Rationales:
-    def __init__(self, tok, task="chaosnli", micro=64):
+    def __init__(self, tok, task="chaosnli", micro=64, confidence=False):
         self.tok, self.task, self.micro = tok, task, micro  # micro: sequences generated per batch
+        self.confidence = confidence  # rlcr: the prompt asks for a 'Confidence: C' line after the answer
         if tok.pad_token_id is None:  # padding is masked out everywhere; the pad id only has to exist
             tok.pad_token = tok.eos_token
         self.label_ids = [tok.encode(" " + lab, add_special_tokens=False)[0] for lab in TASKS[task]["labels"]]
         assert len(set(self.label_ids)) == len(self.label_ids)
         self.eos = {tok.eos_token_id, tok.pad_token_id}
         self.suffix = tok.encode("\n" + MARKER, add_special_tokens=False)
+        self.conf_prefix = tok.encode(CONF_PREFIX, add_special_tokens=False)
 
     def k(self, item):
         return TASKS[self.task]["k"](item)
+
+    @torch.no_grad()
+    def confidences(self, gen_model, rows, answers, sample):
+        """rlcr: the 'Confidence: C' line written after each rationale and its answer token. rows: (prompt_ids,
+        rationale_ids, forced); answers: option index per row; sample: temperature 1 (training) or greedy
+        (evaluation). Returns per row the generated ids (through the first newline or EOS) and the parsed C (or None)."""
+        gen_model.eval()
+        stop = set(self.eos)
+        cfg = getattr(gen_model.generation_config, "eos_token_id", None)
+        stop |= set(cfg if isinstance(cfg, (list, tuple)) else [cfg]) - {None}
+        ctxs = [p + r + (self.suffix if f else []) + [self.label_ids[a]] + self.conf_prefix
+                for (p, r, f), a in zip(rows, answers)]
+        kw = dict(do_sample=True, temperature=1.0, top_p=1.0, top_k=0) if sample else dict(do_sample=False)
+        out = []
+        for s in range(0, len(ctxs), self.micro):
+            chunk = ctxs[s:s + self.micro]
+            width = max(map(len, chunk))
+            ids = torch.full((len(chunk), width), self.tok.pad_token_id, dtype=torch.long)
+            mask = torch.zeros_like(ids)
+            for j, x in enumerate(chunk):  # left-padded, as in sample
+                ids[j, width - len(x):] = torch.tensor(x)
+                mask[j, width - len(x):] = 1
+            mixed = getattr(gen_model, "openjev_mixed_precision", False)
+            with torch.autocast(DEVICE, dtype=torch.bfloat16) if mixed else contextlib.nullcontext():
+                gen = gen_model.generate(input_ids=ids.to(DEVICE), attention_mask=mask.to(DEVICE),
+                                         max_new_tokens=CONF_MAX_TOKENS, stop_strings=["\n"], tokenizer=self.tok,
+                                         pad_token_id=self.tok.pad_token_id, **kw)
+            for row in gen[:, width:].tolist():
+                cut = next((j for j, t in enumerate(row) if t in stop or "\n" in self.tok.decode([t])), None)
+                toks = row if cut is None else row[:cut + 1]
+                out.append((toks, parse_confidence(self.tok.decode(toks))))
+        return out
 
     @torch.no_grad()
     def sample(self, gen_model, items, m, max_new_tokens, micro=None):
         """Per item, m tuples (prompt_ids, rationale_ids, forced: bool)."""
         gen_model.eval()
         micro = micro or self.micro
-        reqs = [(i, prompt(self.tok, it, self.task)) for i, it in enumerate(items) for _ in range(m)]
+        reqs = [(i, prompt(self.tok, it, self.task, confidence=self.confidence)) for i, it in enumerate(items)
+                for _ in range(m)]
         out = [[] for _ in items]
         stop = set(self.eos)  # the tokenizer's EOS/pad and every EOS id the model's generation config stops at
         cfg = getattr(gen_model.generation_config, "eos_token_id", None)
@@ -100,16 +167,23 @@ class Rationales:
                 out[i].append((p_ids, rat, forced))
         return out
 
-    def forward(self, model, group, grad, need_logp=None, k=None, chunk=512, return_hidden=False):
+    def forward(self, model, group, grad, need_logp=None, k=None, chunk=512, return_hidden=False, tails=None):
         """group: list of (prompt_ids, rationale_ids, forced). Returns u [M, K] (zero beyond each
         row's option count k: int or per-row list) and logp_r [M] (None unless grad or need_logp),
         plus (hidden states, row index, position) of the rationale positions with return_hidden.
         Vocabulary logits are computed only at the answer position and, in checkpointed chunks,
-        at the rationale positions -- never over the prompt."""
+        at the rationale positions -- never over the prompt.
+        tails (rlcr): per row (token ids appended after the answer position, number of leading ids not scored);
+        u is still read at the answer position (causal attention: the tail cannot change it), and the sum of
+        log-probabilities of the scored tail ids is returned as one more last element, logp_tail [M]."""
         need_logp = grad if need_logp is None else need_logp
-        seqs, spans = [], []
-        for p, r, forced in group:
+        seqs, spans, tspans = [], [], []
+        for j, (p, r, forced) in enumerate(group):
             ctx = p + r + (self.suffix if forced else [])
+            if tails is not None:
+                tail, fixed = tails[j]
+                tspans.append((len(ctx) + fixed, len(ctx) + len(tail), len(ctx) - 1))
+                ctx = ctx + tail
             seqs.append(ctx)
             spans.append((len(p), len(p) + len(r)))
         width = max(len(x) for x in seqs)
@@ -120,7 +194,7 @@ class Rationales:
             mask[j, :len(x)] = 1
         ids, mask = ids.to(DEVICE), mask.to(DEVICE)
         rows = torch.arange(len(seqs), device=DEVICE)
-        last = torch.tensor([len(x) - 1 for x in seqs], device=DEVICE)
+        last = torch.tensor([len(x) - 1 for x in seqs] if tails is None else [c for _, _, c in tspans], device=DEVICE)
         with torch.set_grad_enabled(grad), torch.autocast(DEVICE, dtype=torch.bfloat16):
             h = model.model(input_ids=ids, attention_mask=mask, use_cache=False).last_hidden_state
             z = model.lm_head(h[rows, last])[:, self.label_ids].float()
@@ -143,8 +217,23 @@ class Rationales:
                 else:
                     parts.append(_token_logp(model.lm_head, hs, tgt[s:s + chunk]))
             lp = torch.cat(parts) if parts else torch.zeros(0, device=DEVICE)
+            if tails is not None:  # the scored tail ids (rlcr: the generated confidence), same chunked log-probs
+                t0 = torch.tensor([a for a, _, _ in tspans], device=DEVICE)[:, None]
+                t1 = torch.tensor([b_ for _, b_, _ in tspans], device=DEVICE)[:, None]
+                b2, t2 = ((pos >= t0 - 1) & (pos < t1 - 1)).nonzero(as_tuple=True)
+                tgt2, parts2 = ids[b2, t2 + 1], []
+                for s in range(0, len(b2), chunk):
+                    hs = h[b2[s:s + chunk], t2[s:s + chunk]]
+                    if grad:
+                        parts2.append(checkpoint(_token_logp, model.lm_head, hs, tgt2[s:s + chunk], use_reentrant=False))
+                    else:
+                        parts2.append(_token_logp(model.lm_head, hs, tgt2[s:s + chunk]))
+                lp2 = torch.cat(parts2) if parts2 else torch.zeros(0, device=DEVICE)
         logp = torch.zeros(len(seqs), device=DEVICE).index_add(0, b, lp)
-        return (u, logp, (h, b, t)) if return_hidden else (u, logp)
+        out = (u, logp, (h, b, t)) if return_hidden else (u, logp)
+        if tails is not None:
+            out = out + (torch.zeros(len(seqs), device=DEVICE).index_add(0, b2, lp2),)
+        return out
 
     def token_kl(self, model, aux, ref_model, ref_aux, chunk=256):
         """Per rationale, the sum over its positions of KL(pi || pi_ref) between next-token distributions,
@@ -176,16 +265,30 @@ def decision_dists(model, rat, items, m, max_new_tokens, stats=None, examples=No
         stats.update(mean_rationale_tokens=sum(len(r) for g in groups for _, r, _ in g) / len(texts),
                      length_limit_rate=sum(len(r) >= max_new_tokens for g in groups for _, r, _ in g) / len(texts),
                      repetition_ratio=sum(map(repetition, texts)) / len(texts))
+    conf_stats = [0, 0.0, 0]  # rlcr: unparseable confidences, sum of parsed confidences, rationales
     for it, g in zip(items, groups):
         k = rat.k(it)
         u = torch.cat([rat.forward(model, g[s:s + 16], grad=False, k=k)[0] for s in range(0, len(g), 16)]).cpu()[:, :k]
+        confs = None
+        if rat.confidence:  # rlcr: the readout is the stated confidence (greedy) on the most probable answer
+            answers = u.argmax(1).tolist()
+            confs = rat.confidences(model, g, answers, sample=False)
+            u = torch.tensor([verbal_dist(1.0 / k if q is None else q, a, k) for a, (_, q) in zip(answers, confs)])
+            conf_stats[0] += sum(q is None for _, q in confs)
+            conf_stats[1] += sum(q for _, q in confs if q is not None)
+            conf_stats[2] += len(confs)
         mix.append(u.mean(0).tolist())
         vote.append((torch.bincount(u.argmax(1), minlength=k).float() / len(u)).tolist())
         single.append(u[0].tolist())
         forced += sum(f for _, _, f in g)
         if examples is not None and len(examples) < 6:
             examples += [dict(uid=it["uid"], q=it["q"], rationale=rat.tok.decode(r),
-                              u=[round(x, 3) for x in uu.tolist()]) for (_, r, _), uu in zip(g[:2], u[:2])]
+                              u=[round(x, 3) for x in uu.tolist()],
+                              **({} if confs is None else dict(confidence=rat.tok.decode(confs[j][0]))))
+                         for j, ((_, r, _), uu) in enumerate(zip(g[:2], u[:2]))]
+    if stats is not None and rat.confidence:
+        stats.update(confidence_unparsed_rate=conf_stats[0] / max(1, conf_stats[2]),
+                     mean_stated_confidence=conf_stats[1] / max(1, conf_stats[2] - conf_stats[0]))
     return mix, vote, single, forced / (m * len(items))
 
 
@@ -211,9 +314,10 @@ def draw(rng, item):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--task", choices=list(TASKS), default="chaosnli")
-    ap.add_argument("--objective", choices=["rlcd", "grpo", "rft"], default="rlcd",
+    ap.add_argument("--objective", choices=["rlcd", "grpo", "rloo", "rlcr", "rft"], default="rlcd",
                     help="rft = STaR / rejection-sampling fine-tuning: behaviour cloning (rationale + answer token) of "
-                         "this step's sampled trajectories whose sampled answer is correct; no baseline, no KL")
+                         "this step's sampled trajectories whose sampled answer is correct; no baseline, no KL. "
+                         "rloo / rlcr: see the module docstring")
     ap.add_argument("--readout-score", choices=["brier", "log"], default="brier",
                     help="proper score for the readout-only objective (with --no-score-function): 'log' = CE on the "
                          "answer distribution read after the model's own rationale")
@@ -283,7 +387,7 @@ def main():
     torch.manual_seed(args.seed)
     rng = random.Random(args.seed)
     tok = AutoTokenizer.from_pretrained(args.model)
-    rat = Rationales(tok, args.task, micro=args.gen_batch)
+    rat = Rationales(tok, args.task, micro=args.gen_batch, confidence=args.objective == "rlcr")
     load = TASKS[args.task]["load"]
 
     if args.eval_only:  # same bf16 weights the training loop samples from and saves
@@ -358,13 +462,26 @@ def main():
         model.train()
         opt.zero_grad(set_to_none=True)
         hit, forced, kl_sum, umax, var, kl_tok_sum = 0.0, 0, 0.0, 0.0, 0.0, 0.0
+        conf_log = [0.0, 0, 0]  # rlcr: sum of parsed confidences, unparseable ones, all
         tok_anchor = args.kl_tokens > 0 and ref_model is not None
         for it, g in zip(items, groups):
             y = draw(rng, it)  # one fresh outcome (always drawn: same item order across arms)
             if args.fixed_label:
                 y = fixed[it["uid"]]
             k = rat.k(it)
-            out = rat.forward(model, g, grad=True, k=k, return_hidden=tok_anchor)
+            tails = None
+            if args.objective == "rlcr":  # the answer and its confidence line are sampled first; one pass scores both
+                with torch.no_grad():
+                    u0 = rat.forward(gen_model, g, grad=False, k=k)[0][:, :k].float()
+                a_cr = torch.multinomial(u0, 1).squeeze(1)
+                confs = rat.confidences(gen_model, g, a_cr.tolist(), sample=True)
+                tails = [([rat.label_ids[a]] + rat.conf_prefix + toks, 1 + len(rat.conf_prefix))
+                         for a, (toks, _) in zip(a_cr.tolist(), confs)]
+                model.train()  # confidences() put the sampler in eval mode; with --offload-optimizer it is the model
+                conf_log[0] += sum(q for _, q in confs if q is not None)
+                conf_log[1] += sum(q is None for _, q in confs)
+                conf_log[2] += len(confs)
+            out = rat.forward(model, g, grad=True, k=k, return_hidden=tok_anchor, tails=tails)
             u, logp_r = out[0][:, :k], out[1]
             if args.no_score_function or step <= args.pathwise_warmup:
                 logp_r = logp_r.detach()
@@ -399,6 +516,21 @@ def main():
                 adv = (r - r.mean()) / (r.std(unbiased=False) + 1e-4)
                 reg = extra - (extra.sum() - extra) / (m - 1)  # same shaping, leave-one-out baseline (unbiased)
                 loss = (-(adv * (logp_sf + u[torch.arange(m, device=DEVICE), a].clamp_min(1e-12).log())).mean()
+                        - (reg * logp_sf).sum())
+            elif args.objective == "rloo":  # grpo's reward, leave-one-out baseline, no division by the group std
+                a = torch.multinomial(u.detach(), 1).squeeze(1)
+                r = (a == y).float()
+                adv = r - (r.sum() - r) / (m - 1)
+                reg = extra - (extra.sum() - extra) / (m - 1)
+                loss = (-(adv * (logp_sf + u[torch.arange(m, device=DEVICE), a].clamp_min(1e-12).log())).mean()
+                        - (reg * logp_sf).sum())
+            elif args.objective == "rlcr":  # grpo with the RLCR reward; the confidence tokens are part of the action
+                a = a_cr.to(DEVICE)
+                r = rlcr_reward((a == y).float(), [q for _, q in confs])
+                adv = (r - r.mean()) / (r.std(unbiased=False) + 1e-4)
+                reg = extra - (extra.sum() - extra) / (m - 1)
+                logp_c = out[-1] * args.sf_coef if args.sf_coef != 1.0 else out[-1]
+                loss = (-(adv * (logp_sf + logp_c + u[torch.arange(m, device=DEVICE), a].clamp_min(1e-12).log())).mean()
                         - (reg * logp_sf).sum())
             elif args.sf_reader == "none":  # anchor-only control: equal rewards -> only the shaping terms remain
                 loss = (lambda_surrogate(u, logp_sf.detach(), y, args.diversity_weight)
@@ -442,6 +574,9 @@ def main():
                                   forced_marker_rate=forced / (args.m * len(items)), kl_est=kl_sum / len(items),
                                   kl_tokens=kl_tok_sum / len(items),
                                   mean_u_max=umax / len(items), var_u=var / len(items),
+                                  **({} if not conf_log[2] else dict(
+                                      mean_stated_confidence=conf_log[0] / max(1, conf_log[2] - conf_log[1]),
+                                      confidence_unparsed_rate=conf_log[1] / conf_log[2])),
                                   gpu_peak_gb=torch.cuda.max_memory_allocated() / 2**30 if DEVICE == "cuda" else 0.0,
                                   minutes=(time.perf_counter() - t0) / 60)), flush=True)
         if step % args.eval_every == 0:

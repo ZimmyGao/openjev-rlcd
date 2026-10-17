@@ -25,8 +25,14 @@ TASKS = {
 }
 
 
-def prompt(tok, item, task):
-    """Chat prompt (Qwen3 non-thinking mode); the rationale is generated after it."""
-    text = tok.apply_chat_template([{"role": "user", "content": TASKS[task]["message"](item)}], tokenize=False,
+CONFIDENCE_REQUEST = ("After that line, write one more line of the form 'Confidence: C', where C is your probability "
+                      "(a number from 0 to 1) that your answer is correct.")
+
+
+def prompt(tok, item, task, confidence=False):
+    """Chat prompt (Qwen3 non-thinking mode); the rationale is generated after it. confidence: also ask for a
+    'Confidence: C' line after the answer (the RLCR baseline, train.py --objective rlcr)."""
+    message = TASKS[task]["message"](item) + (" " + CONFIDENCE_REQUEST if confidence else "")
+    text = tok.apply_chat_template([{"role": "user", "content": message}], tokenize=False,
                                    add_generation_prompt=True, enable_thinking=False)
     return re.sub(r"(Today Date: )[^\n]*", lambda m: m.group(1) + FIXED_DATE, text)
