@@ -18,6 +18,8 @@ def fit_temperature(dev_logits, dev_items, seed):
     y = torch.tensor(ys)
     grid = torch.exp(torch.linspace(math.log(0.1), math.log(50.0), 311))  # wide: overconfident models need T > 8
     nll = torch.stack([torch.nn.functional.cross_entropy(z / t, y) for t in grid])
+    if float(nll.max() - nll.min()) < 1e-4:  # the dev NLL does not depend on T (e.g. every dev readout uniform)
+        return 1.0                          # -> nothing to fit: no scaling, instead of an arbitrary end of the grid
     return float(grid[nll.argmin()])
 
 

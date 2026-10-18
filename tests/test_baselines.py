@@ -90,3 +90,12 @@ def test_verbal_decision_keeps_the_stated_answer():
     assert verbal_decision(verbal_dist(0.6, 3, 10)) == verbal_dist(0.6, 3, 10)  # C >= 1/K: unchanged
     assert verbal_decision([0.2, 0.8]) == [0.2, 0.8]  # K = 2 is exact: the other answer is the decision
     assert verbal_decision([0.25] * 4) == [0.25] * 4
+
+
+def test_flat_dev_nll_leaves_the_temperature_at_one():
+    from openjev_rlcd.metrics import fit_temperature
+    items = [dict(uid=str(i), counts=[1, 0, 0, 0]) for i in range(20)]
+    flat = [torch.zeros(4) for _ in items]  # uniform readouts: the NLL is log 4 at every T
+    assert fit_temperature(flat, items, 17) == 1.0
+    sharp = [torch.tensor([30.0, 0.0, 0.0, 0.0]) if i % 2 else torch.tensor([0.0, 30.0, 0.0, 0.0]) for i in range(20)]
+    assert fit_temperature(sharp, items, 17) > 1.0  # overconfident and half wrong: soften

@@ -19,7 +19,7 @@ while [ -z "$event" ]; do
   echo "$newq" | grep -q " end \| FAILED\|IDLE\|ALL DONE\|watchdog" && \
     event="queue: $(echo "$newq" | grep " end \| FAILED\|IDLE\|ALL DONE\|watchdog" | tail -3 | tr '\n' '|')"
   avail=$(df --output=avail -BG / | tail -1 | tr -dc 0-9)
-  [ "$avail" -lt 80 ] && event="$event; disk low (${avail}G)"
+  [ "$avail" -lt "${DISK_MIN:-80}" ] && event="$event; disk low (${avail}G)"  # DISK_MIN: alert threshold in GB
   if [ ! -f runs/queue/STOP.v2 ]; then
     for s in ${SESSIONS:-ojq0b ojq1b ojreport ojfinish ojwatchdog}; do
       tmux has-session -t "=$s" 2>/dev/null || event="$event; session $s gone"
