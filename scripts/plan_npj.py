@@ -20,7 +20,8 @@ the saved config of the paper run it mirrors: the only differences allowed are t
 output and the options that define the arm (ALLOWED below); anything else makes the script exit 1. The parity report
 goes to stderr, the job lines to stdout:
     python3 scripts/plan_npj.py tier1 > lines && python3 scripts/jobqueue.py push < lines
-Run files: runs/npj/<model>/ (tuning: runs/npj_tune/<model>/); final weights (all runs, kept): CKPT/<model>/<name>.pt.
+Run files: runs/npj/<model>/ (tuning: runs/npj_tune/<model>/); final weights (all runs, kept):
+$OPENJEV_CKPT_DIR/npj/<model>/<name>.pt (default directory: checkpoints).
 """
 import argparse
 import json
@@ -34,7 +35,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 import plan_anchored as P  # noqa: E402  (MODELS, TASKS, margs: the paper's flags)
 
-CKPT = "/data/Projects/openjev-rlcd/checkpoints"
+CKPT = os.environ.get("OPENJEV_CKPT_DIR", "checkpoints")  # final weights (the paper's runs used a separate data disk)
 QWEN = ("qwen3-0.6b", "qwen3-1.7b")
 BIG = ("smollm3-3b", "phi-4-mini")
 SEEDS = (17, 23, 29)

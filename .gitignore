@@ -14,3 +14,5 @@ runs/
 # paper sources are kept out of the repository
 paper/
 .pytest_cache/
+# final weights written by the planners (scripts/plan_npj.py, OPENJEV_CKPT_DIR)
+checkpoints/

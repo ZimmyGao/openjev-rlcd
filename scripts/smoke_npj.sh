@@ -2,7 +2,7 @@
 # GPU check of every option added for the npj protocol (paper/npj/PROTOCOL.md) on a few questions (one GPU; MODEL as in
 # common.sh, default Qwen3-0.6B here). SMOKE_SET=offload runs the subset that touches the offload paths (use with
 #   MODEL=HuggingFaceTB/SmolLM3-3B OFFLOAD=1). Writes to runs/smoke_npj/<model>/ and its checkpoints to $CKPT_SMOKE
-# (default /data/Projects/openjev-rlcd/checkpoints/smoke_npj/<model>); earlier smoke files are retired, never deleted.
+# (default ${OPENJEV_CKPT_DIR:-checkpoints}/smoke_npj/<model>); earlier smoke files are retired, never deleted.
 # Exits non-zero unless every run file has the expected split, log-probabilities, calib block and snapshots.
 MODEL=${MODEL:-Qwen/Qwen3-0.6B}
 source "$(dirname "$0")/common.sh"
@@ -11,7 +11,7 @@ source "$(dirname "$0")/common.sh"
 [ "${OFFLOAD:-0}" = 1 ] && MFLAGS="--model $MODEL --offload-optimizer --gpu-headroom-gb 24 --gen-batch 16"
 SET=${SMOKE_SET:-$([ "${OFFLOAD:-0}" = 1 ] && echo offload || echo all)}
 OUT=runs/smoke_npj/$(basename "$MODEL"); mkdir -p "$OUT"
-CK=${CKPT_SMOKE:-/data/Projects/openjev-rlcd/checkpoints/smoke_npj/$(basename "$MODEL")}; mkdir -p "$CK"
+CK=${CKPT_SMOKE:-${OPENJEV_CKPT_DIR:-checkpoints}/smoke_npj/$(basename "$MODEL")}; mkdir -p "$CK"
 S="--task mmlupro --m 4 --m-eval 4 --max-new-tokens 64 --steps 2 --eval-every 2 --dev-cap 4 --test-cap 4 --diversity-weight 0 --seed 1 $MFLAGS"
 retire "$OUT"/*.json "$OUT"/*.log
 retire "$CK"/*.pt

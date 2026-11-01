@@ -11,9 +11,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
-from plan_npj import parse  # noqa: E402
+from plan_npj import CKPT, parse  # noqa: E402
 
-CK = "/data/Projects/openjev-rlcd/checkpoints/npj"
+CK = f"{CKPT}/npj"
 SEEDS = (17, 23, 29)
 MODEL = {"qwen3-0.6b": "Qwen/Qwen3-0.6B", "qwen3-1.7b": "Qwen/Qwen3-1.7B"}
 TASK = {  # the registered fresh-protocol settings of each task (runs/npj/plan_tier1.txt)
@@ -67,7 +67,7 @@ def x3(cells):
     return out
 
 
-CKP = "/data/Projects/openjev-rlcd/checkpoints/npj_posthoc"
+CKP = f"{CKPT}/npj_posthoc"
 SEEDS_X4 = (41, 53)
 
 
