@@ -8,7 +8,9 @@ Labels come from comparing the proposal with the gold answer, so q is one-hot ov
 
   python -m openjev_rlcd.tasks.gsm8k_verify --build   rebuilds data/gsm8k_verify.json (one GPU, ~20 min; the
                                                   released file is the one used in the paper)
-Splits: train/dev from GSM8K train (disjoint problems), test = GSM8K test.
+Splits: train/dev from GSM8K train (disjoint problems), test = GSM8K test; the unused GSM8K-train problems give the
+npj protocol's independent final test set (fresh, as many items as test) and held-out items for decision thresholds
+(calib, the rest).
 """
 import argparse
 import json
@@ -71,6 +73,9 @@ def build(model_name="Qwen/Qwen3-0.6B", seed=0, batch=64, max_new_tokens=320):
     DATA.write_text(json.dumps(dict(solver=model_name, seed=seed, items=out)))
 
 
+FRESH = 1260  # npj protocol (paper/npj/PROTOCOL.md): the size of the GSM8K-test split
+
+
 def load_items(split_seed=0, n_train=4000, n_dev=500):
     rows = json.loads(DATA.read_text())["items"]
     items = [dict(uid=r["uid"], question=r["question"], proposed=r["proposed"],
@@ -78,8 +83,9 @@ def load_items(split_seed=0, n_train=4000, n_dev=500):
                   split=r["split"]) for r in rows]
     pool = [it for it in items if it["split"] == "train"]
     random.Random(split_seed).shuffle(pool)
+    rest = pool[n_train + n_dev:]  # GSM8K-train problems no run before the npj protocol used
     return dict(train=pool[:n_train], dev=pool[n_train:n_train + n_dev], test=[it for it in items if it["split"] == "test"],
-                pool=pool[n_train + n_dev:])
+                fresh=rest[:FRESH], calib=rest[FRESH:], pool=rest)
 
 
 def user_message(item, reasoning=True):

@@ -4,7 +4,8 @@
 # has had no compute process for ~10 min, or no queue job has run for ~10 min while jobs are queued (safety nets
 # against scheduler bugs). Prints a short status report.
 #   [IGNORE_IDLE="1"] [SESSIONS="ojq0b ..."] bash scripts/watch_queue.sh   # IGNORE_IDLE: GPUs expected to idle;
-#   SESSIONS: tmux sessions that must stay up (default: both workers, report loop, finisher, watchdog)
+#   SESSIONS: tmux sessions that must stay up (default: both workers, report loop, finisher, watchdog);
+#   STOP_FILE: the queue's STOP file (default runs/queue/STOP.v2); while it exists, sessions and GPUs may stop
 cd "$(dirname "$0")/.." || exit 1
 QS=runs/queue/status.txt
 q0=$(wc -l < "$QS")
@@ -20,7 +21,7 @@ while [ -z "$event" ]; do
     event="queue: $(echo "$newq" | grep " end \| FAILED\|IDLE\|ALL DONE\|watchdog" | tail -3 | tr '\n' '|')"
   avail=$(df --output=avail -BG / | tail -1 | tr -dc 0-9)
   [ "$avail" -lt "${DISK_MIN:-80}" ] && event="$event; disk low (${avail}G)"  # DISK_MIN: alert threshold in GB
-  if [ ! -f runs/queue/STOP.v2 ]; then
+  if [ ! -f "${STOP_FILE:-runs/queue/STOP.v2}" ]; then
     for s in ${SESSIONS:-ojq0b ojq1b ojreport ojfinish ojwatchdog}; do
       tmux has-session -t "=$s" 2>/dev/null || event="$event; session $s gone"
     done
@@ -34,12 +35,12 @@ while [ -z "$event" ]; do
   for g in 0 1; do
     if GPU=$g gpu_busy; then idle[$g]=0; else idle[$g]=$((idle[$g] + 1)); fi
     case " ${IGNORE_IDLE:-} " in *" $g "*) continue ;; esac  # GPUs expected to idle (e.g. only offload jobs left)
-    [ "${idle[$g]}" -ge 5 ] && [ ! -f runs/queue/STOP.v2 ] && event="$event; GPU$g idle ~$((idle[$g] * 2)) min"
+    [ "${idle[$g]}" -ge 5 ] && [ ! -f "${STOP_FILE:-runs/queue/STOP.v2}" ] && event="$event; GPU$g idle ~$((idle[$g] * 2)) min"
   done
   # scheduler-level net, independent of GPU use by other projects: nothing running while jobs are queued
   if [ -z "$(awk 'NF' runs/queue/running.txt)" ] && grep -q '^[^#[:space:]]' runs/queue/queue.txt; then
     stalled=$((stalled + 1)); else stalled=0; fi
-  [ "$stalled" -ge 5 ] && [ ! -f runs/queue/STOP.v2 ] && event="$event; queue stalled: nothing running for ~$((stalled * 2)) min"
+  [ "$stalled" -ge 5 ] && [ ! -f "${STOP_FILE:-runs/queue/STOP.v2}" ] && event="$event; queue stalled: nothing running for ~$((stalled * 2)) min"
 done
 date
 echo "EVENT: ${event#; }"

@@ -11,6 +11,7 @@ label draws all work unchanged. Options beyond an item's own count are masked ou
 import argparse
 import json
 import random
+import re
 
 import torch
 
@@ -20,6 +21,14 @@ LETTERS = "ABCDEFGHIJ"
 
 
 STEM = ("math", "physics", "chemistry", "engineering", "computer science")  # computation-heavy subjects
+# npj protocol (paper/npj/PROTOCOL.md): the first questions of the unused pool are the independent final test set
+# (fresh) and, after it, held-out items for decision thresholds (calib); no earlier run read any pool question. MMLU-Pro
+# repeats some items, so pool questions whose (whitespace-normalized, lower-cased) stem occurs in train or dev are skipped
+FRESH, CALIB = 1000, 1000
+
+
+def _stem(text):
+    return re.sub(r"\s+", " ", text.strip().lower())
 
 
 def load_items(split_seed=0, n_train=4000, n_dev=500, n_test=1500, categories=None):
@@ -35,9 +44,12 @@ def load_items(split_seed=0, n_train=4000, n_dev=500, n_test=1500, categories=No
         items.append(dict(uid=str(x["question_id"]), question=x["question"], options=list(x["options"]),
                           category=x["category"], q=q, counts=q))
     random.Random(split_seed).shuffle(items)
+    pool = items[n_train + n_dev + n_test:]  # questions no run before the npj protocol used
+    seen = {_stem(it["question"]) for it in items[:n_train + n_dev]}
+    unseen = [it for it in pool if _stem(it["question"]) not in seen]
     return dict(train=items[:n_train], dev=items[n_train:n_train + n_dev],
                 test=items[n_train + n_dev:n_train + n_dev + n_test],
-                pool=items[n_train + n_dev + n_test:])  # unused questions: an unlabeled pool for distillation
+                fresh=unseen[:FRESH], calib=unseen[FRESH:FRESH + CALIB], pool=pool)
 
 
 def user_message(item, reasoning=True):

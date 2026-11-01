@@ -59,6 +59,8 @@ def load_runs(files, kind, readout, keep_collapsed=False):
         if not p.exists():
             continue
         d = json.loads(p.read_text())
+        if d.get("config", {}).get("test_split", "test") != "test":  # npj-protocol runs: openjev_rlcd.npj_report
+            raise ValueError(f"{p} was evaluated on split {d['config']['test_split']!r}; these tables score 'test' only")
         if not keep_collapsed and S.collapsed(d.get("test", {}).get("rationale")):
             DROPPED[f] = "collapsed rationales (evaluation.collapsed)"
             continue

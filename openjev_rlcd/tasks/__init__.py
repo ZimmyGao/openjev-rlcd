@@ -6,7 +6,7 @@
 """
 import re
 
-from . import chaosnli, gsm8k_verify, mmlu_pro
+from . import arc, chaosnli, gsm8k_verify, mmlu_pro, svamp_verify
 
 # Some chat templates insert today's date (SmolLM3: "Today Date: ..."); pin it so that a run's prompts do not
 # change from one day to the next.
@@ -22,17 +22,30 @@ TASKS = {
                          k=lambda it: len(it["options"])),
     "gsm8kv": dict(labels=gsm8k_verify.LABELS, message=gsm8k_verify.user_message, load=gsm8k_verify.load_items,
                    k=lambda it: len(gsm8k_verify.LABELS)),
+    # out-of-domain transfer tests of the npj protocol (eval-only on saved weights; no training split)
+    "arc": dict(labels=list(mmlu_pro.LETTERS), message=mmlu_pro.user_message, load=arc.load_items,
+                k=lambda it: len(it["options"])),
+    "svampv": dict(labels=svamp_verify.LABELS, message=gsm8k_verify.user_message, load=svamp_verify.load_items,
+                   k=lambda it: len(svamp_verify.LABELS)),
 }
 
 
 CONFIDENCE_REQUEST = ("After that line, write one more line of the form 'Confidence: C', where C is your probability "
                       "(a number from 0 to 1) that your answer is correct.")
+CREDO_REQUEST = ("After that line, analyze how likely your answer is to be correct between <analysis> and </analysis>, "
+                 "then write <confidence>high</confidence> if your answer is likely correct or "
+                 "<confidence>low</confidence> if it is likely wrong.")
 
 
-def prompt(tok, item, task, confidence=False):
-    """Chat prompt (Qwen3 non-thinking mode); the rationale is generated after it. confidence: also ask for a
-    'Confidence: C' line after the answer (the RLCR baseline, train.py --objective rlcr)."""
-    message = TASKS[task]["message"](item) + (" " + CONFIDENCE_REQUEST if confidence else "")
+def prompt(tok, item, task, confidence=False, thinking=False, credo=False):
+    """Chat prompt (non-thinking mode unless thinking); the rationale is generated after it. confidence: also ask for
+    a 'Confidence: C' line after the answer (the RLCR baseline, train.py --objective rlcr). credo: also ask for an
+    analysis of the answer and a high/low confidence slot after it (the CREDO baseline, train.py --objective credo).
+    thinking: the same message, with the chat template's thinking mode (the think block is opened for the model instead
+    of closed empty)."""
+    assert not (confidence and credo)
+    request = CONFIDENCE_REQUEST if confidence else CREDO_REQUEST if credo else ""
+    message = TASKS[task]["message"](item) + (" " + request if request else "")
     text = tok.apply_chat_template([{"role": "user", "content": message}], tokenize=False,
-                                   add_generation_prompt=True, enable_thinking=False)
+                                   add_generation_prompt=True, enable_thinking=thinking)
     return re.sub(r"(Today Date: )[^\n]*", lambda m: m.group(1) + FIXED_DATE, text)

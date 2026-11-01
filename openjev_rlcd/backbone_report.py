@@ -131,6 +131,8 @@ def load(path, kind):
         d = json.loads(path.read_text())
     except (OSError, ValueError):
         return None
+    if d.get("config", {}).get("test_split", "test") != "test":  # npj-protocol runs: openjev_rlcd.npj_report
+        raise ValueError(f"{path} was evaluated on split {d['config']['test_split']!r}; this report scores 'test' only")
     if kind == "direct":
         if "test" not in d or "test_dists" not in d:
             return None

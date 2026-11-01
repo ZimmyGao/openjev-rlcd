@@ -13,10 +13,10 @@ for s in $SEEDS; do  # baselines first, then RLCD stage 1 and stage 2
   run ${P}_rftkl_seed$s   train $A --objective rft --kl-beta 0.04 --seed $s --eval-every 400
   run ${P}_direct_lr2e-6_seed$s train_direct --task "$TASK" $MFLAGS --labels fresh --lr 2e-6 --seed $s --steps 400 \
     --dev-cap 300 --test-cap $(direct_test_cap "$TASK")
-  ck=$OUT/${P}_warm400_s$s.pt
+  ck=$CKPT/${P}_warm400_s$s.pt
   fork=$OUT/${P}_fork_rl_seed$s.json
-  if [ -f "$fork" ] && grep -q '"test": {' "$fork"; then continue; fi  # stage 2 done: its checkpoint is no longer needed
-  [ -f "$ck" ] || rm -f "$OUT/${P}_warm400_seed$s.json"  # stage 1 must be rerun to recreate the checkpoint
+  if [ -f "$fork" ] && grep -q '"test": {' "$fork"; then continue; fi  # stage 2 done: stage 1 need not be rerun
+  [ -f "$ck" ] || retire "$OUT/${P}_warm400_seed$s.json"  # stage 1 must be rerun to recreate the checkpoint
   run ${P}_warm400_seed$s train $A --kl-beta 0.04 --seed $s --eval-every 400 --no-score-function --save-checkpoint "$ck"
   run ${P}_fork_rl_seed$s train $A --kl-beta 0.04 --seed $((1000 + s)) --eval-every 400 --init-checkpoint "$ck" --sf-coef 0.3
 done

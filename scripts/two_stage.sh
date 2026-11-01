@@ -13,8 +13,8 @@
 source "$(dirname "$0")/common.sh"
 TASK=$1; A=$(task_args "$TASK"); P=$(prefix "$TASK")
 for s in $SEEDS; do
-  ck=$OUT/${P}_warm400_s$s.pt
-  [ -f "$ck" ] || rm -f "$OUT/${P}_warm400_seed$s.json"
+  ck=$CKPT/${P}_warm400_s$s.pt
+  [ -f "$ck" ] || retire "$OUT/${P}_warm400_seed$s.json"  # stage 1 must be rerun to recreate the checkpoint
   run ${P}_warm400_seed$s train $A --kl-beta 0.04 --seed $s --eval-every 400 --no-score-function --save-checkpoint "$ck"
   F="$A --kl-beta 0.04 --seed $((1000 + s)) --eval-every 400 --init-checkpoint $ck"
   run ${P}_fork_rl_seed$s     train $F --sf-coef 0.3

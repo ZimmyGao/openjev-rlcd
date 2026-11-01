@@ -1,0 +1,55 @@
+{
+ "mmlupro": {
+  "train": {
+   "4000": "010c728eb0553d9a454683975958e064d2a866f1999220e7a12b9e53af3cba30"
+  },
+  "dev": {
+   "300": "1194c22f6a3d08ba0bd389528f409650e300d21893187d29e3f3fc2fcfaaf8b8"
+  },
+  "test": {
+   "1000": "26bc79f6520e5f59c429f17667721fcc206ba7b593597fee3441c7cd2d9c346e"
+  },
+  "fresh": {
+   "1000": "c588fabfc764db7a5f2fb5347f8cfea6e7b35f4190eedce571c611dbd5719f42"
+  },
+  "calib": {
+   "1000": "8f8b4eb5c1b7cd25bc091258a59dc9cb24926a8088d8bc26d28bbd99df09d010"
+  }
+ },
+ "gsm8kv": {
+  "train": {
+   "4000": "eff20e134644282a03ad4bee61e6c43f5a00d9a0356e9e56168ba63c2477fc28"
+  },
+  "dev": {
+   "300": "1543b540b07368703a2069324f1e2d4a2e07f558566f3e3aa369293936f27585"
+  },
+  "test": {
+   "1260": "3ff42e10dec145af7a40c379655097526952db6ad117fc914e12cd8b9b75bdce"
+  },
+  "fresh": {
+   "1260": "d2a38b6b1a7e022a9a429f9cca6ff55a9efa608fa5bb906ebba8fddb5cdeb60c"
+  },
+  "calib": {
+   "1260": "40574385bd9e04948beacfdcda4eddc980ad43358720accc28a76c5cdb9b3b48"
+  }
+ },
+ "chaosnli": {
+  "train": {
+   "1000": "7c7c06f76213b413a606ce72e22392dad94d39eec35fd7ed0515da11726faf36"
+  },
+  "dev": {
+   "199": "dc105ad021d694e5e8a1119e7a90edf64ddf77240f40bdd28b477c25f2170259"
+  },
+  "test": {
+   "400": "3001a0a8de38a3fa7e6c2af9467c0ba8a40eea26005980d466762d23e1e30afa"
+  }
+ },
+ "arc": {
+  "dev": {
+   "299": "103a254b381d467a725b53a510d80cba1fff7b7b71d9df1069be6330df0c8d8f"
+  },
+  "test": {
+   "1172": "e27b72037814d2c6c1e5e9eba2706103cd4b35834bb3fac12b9254c5890da01a"
+  }
+ }
+}

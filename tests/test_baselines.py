@@ -1,7 +1,10 @@
-"""The rloo and rlcr baselines (train.py): parsing and scoring of the verbalized confidence, and the tail option of
+"""The rloo and rlcr baselines (train.py): parsing and scoring of the verbalized confidence, the group advantages
+(group-normalized or leave-one-out), and the tail option of
 Rationales.forward -- appending the answer token and the confidence line changes neither the readout u nor the
 rationale log-probability, and the tail's log-probability is the sum over its scored tokens."""
+import json
 import math
+import sys
 from pathlib import Path
 
 import pytest
@@ -27,6 +30,41 @@ def test_verbal_dist_and_reward():
     assert verbal_dist(0.3, 0, 2) == [0.3, 0.7]  # a low stated confidence moves the mass to the other answer
     r = rlcr_reward(torch.tensor([1.0, 0.0, 1.0, 0.0]), [0.8, 0.8, None, None])
     torch.testing.assert_close(r, torch.tensor([1 - 0.04, -0.64, 0.0, -1.0]))
+
+
+def test_group_advantages():
+    r = torch.tensor([1.0, 0.0, 0.0, 1.0])
+    torch.testing.assert_close(train.group_advantages(r, "grpo"), (r - 0.5) / (0.5 + 1e-4))
+    loo = train.group_advantages(r, "loo")
+    torch.testing.assert_close(loo, torch.tensor([1 - 1 / 3, -2 / 3, -2 / 3, 1 - 1 / 3]))
+    assert abs(float(loo.sum())) < 1e-6  # leave-one-out advantages sum to zero
+    with pytest.raises(ValueError):
+        train.group_advantages(r, "other")
+
+
+def test_rlcr_groups_under_both_advantages():
+    """the mechanism the leave-one-out arm tests: a group with right and wrong answers gets advantages of unit size under
+    both rules, a group whose answers are all right (or all wrong) only under GRPO's division by the group std"""
+    mixed = rlcr_reward(torch.tensor([1.0, 0.0, 1.0, 0.0]), [0.8] * 4)
+    right = rlcr_reward(torch.ones(4), [0.9, 0.95, 0.99, 1.0])
+    wrong = rlcr_reward(torch.zeros(4), [0.1, 0.05, 0.01, 0.0])
+    adv = {(g, k): train.group_advantages(r, k) for g, r in (("mixed", mixed), ("right", right), ("wrong", wrong))
+           for k in ("grpo", "loo")}
+    for g in ("mixed", "right", "wrong"):
+        assert float(adv[(g, "grpo")].std(unbiased=False)) > 0.9  # unit size whatever the reward differences
+    assert float(adv[("mixed", "loo")].abs().max()) > 1.0  # 0.96 vs -0.64: as large as under GRPO
+    for g in ("right", "wrong"):
+        assert float(adv[(g, "loo")].abs().max()) < 0.02  # only the raw differences of (1 - C)^2 or C^2
+        assert torch.equal(torch.sign(adv[(g, "grpo")]), torch.sign(adv[(g, "loo")]))  # same direction, other weight
+    assert adv[("right", "loo")][0] < 0 < adv[("right", "loo")][3]  # all right: towards C = 1
+    assert adv[("wrong", "loo")][0] < 0 < adv[("wrong", "loo")][3]  # all wrong: towards C = 0
+
+
+def test_rlcr_advantage_only_with_rlcr(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["train", "--objective", "grpo", "--rlcr-advantage", "loo", "--output", "x.json"])
+    with pytest.raises(SystemExit) as e:
+        train.main()
+    assert e.value.code == 2 and "--rlcr-advantage applies to --objective rlcr only" in capsys.readouterr().err
 
 
 def _tiny(monkeypatch):
@@ -99,3 +137,23 @@ def test_flat_dev_nll_leaves_the_temperature_at_one():
     assert fit_temperature(flat, items, 17) == 1.0
     sharp = [torch.tensor([30.0, 0.0, 0.0, 0.0]) if i % 2 else torch.tensor([0.0, 30.0, 0.0, 0.0]) for i in range(20)]
     assert fit_temperature(sharp, items, 17) > 1.0  # overconfident and half wrong: soften
+
+
+def test_rlcr_advantage_reaches_the_loss(monkeypatch, tmp_path):
+    """one training step of --objective rlcr on a tiny random model (CPU): the option selects the advantage rule that the
+    rlcr branch uses, and the run file records it"""
+    tok, model = _tiny(monkeypatch)
+    tok.save_pretrained(tmp_path / "m")
+    model.save_pretrained(tmp_path / "m")
+    calls, orig = [], train.group_advantages
+    monkeypatch.setattr(train, "group_advantages", lambda r, kind: calls.append(kind) or orig(r, kind))
+    for adv in ("loo", "grpo"):
+        calls.clear()
+        out = tmp_path / f"{adv}.json"
+        argv = ["train", "--task", "gsm8kv", "--model", str(tmp_path / "m"), "--objective", "rlcr", "--steps", "1",
+                "--items-per-step", "2", "--m", "4", "--m-eval", "2", "--max-new-tokens", "6", "--eval-every", "1",
+                "--dev-cap", "2", "--test-cap", "2", "--output", str(out)]
+        monkeypatch.setattr(sys, "argv", argv + (["--rlcr-advantage", "loo"] if adv == "loo" else []))
+        train.main()
+        assert calls and set(calls) == {adv}  # one call per question of the step, all with the chosen rule
+        assert json.loads(out.read_text())["config"]["rlcr_advantage"] == adv

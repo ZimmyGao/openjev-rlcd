@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Shared settings for every run in the paper. Sourced by the other scripts; not run directly.
 #   OUT=<dir>   where run files go (default: runs/; the released files are in results/)
+#   CKPT=<dir>  where checkpoints go (default: $OUT); SAVE_FINAL=1 also saves the final weights of every train run
 #   SEEDS="17 23 29"  PY=python  CUDA_VISIBLE_DEVICES=<gpu>
 #   MODEL=<hf id> (default Qwen/Qwen3-1.7B)   OFFLOAD=1: fp32 master weights + AdamW on the CPU (3-4B models)
 # One run = one 48 GB GPU (Qwen3-1.7B: fp32 trained weights + bf16 sampling and reference copies). With
@@ -13,7 +14,8 @@ PY=${PY:-python}
 MODEL=${MODEL:-Qwen/Qwen3-1.7B}
 MFLAGS="--model $MODEL"
 [ "${OFFLOAD:-0}" = 1 ] && MFLAGS="$MFLAGS --offload-optimizer --gpu-headroom-gb ${GPU_HEADROOM_GB:-16} --gen-batch 32"
-mkdir -p "$OUT"
+CKPT=${CKPT:-$OUT}
+mkdir -p "$OUT" "$CKPT"
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 # 8 questions x M=4 rationales per step, 400 steps, per-rationale objective (lambda = 0)
@@ -25,10 +27,19 @@ prefix() { case $1 in gsm8kv) echo gv ;; mmlupro) echo mp ;; esac; }
 # test-set size for the direct-answer baseline (0 = whole split)
 direct_test_cap() { case $1 in gsm8kv) echo 0 ;; mmlupro) echo 1000 ;; esac; }
 
-# run <name> <module> <args...>  ->  $OUT/<name>.json (+ .log); skips runs that already finished
+# retire <file>...: move files aside (<file>.superseded-<time>) instead of deleting them
+retire() { local f; for f in "$@"; do [ -e "$f" ] && mv -n "$f" "$f.superseded-$(date +%Y%m%d-%H%M%S)"; done; return 0; }
+
+# run <name> <module> <args...>  ->  $OUT/<name>.json (+ .log); skips runs that already finished; the files of an
+# unfinished earlier attempt are kept (retired), never overwritten
 run() {
   local name=$1 module=$2; shift 2
   if [ -f "$OUT/$name.json" ] && grep -q '"test": {' "$OUT/$name.json"; then echo "skip $name (done)"; return; fi
   echo "[$(date '+%m-%d %H:%M')] $name"
-  $PY -m "openjev_rlcd.$module" "$@" --output "$OUT/$name.json" > "$OUT/$name.log" 2>&1
+  retire "$OUT/$name.json" "$OUT/$name.log"
+  local save=()
+  if [ "${SAVE_FINAL:-0}" = 1 ] && [ "$module" = train ] && [[ " $* " != *" --save-checkpoint "* ]]; then
+    save=(--save-checkpoint "$CKPT/$name.pt")
+  fi
+  $PY -m "openjev_rlcd.$module" "$@" "${save[@]}" --output "$OUT/$name.json" > "$OUT/$name.log" 2>&1
 }
