@@ -42,6 +42,15 @@ MAX_FAILS = 2
 MIN_DISK_GB = float(os.environ.get("QUEUE_MIN_DISK_GB", "40"))
 
 
+def min_disk_gb():
+    """MIN_DISK_GB, or the number in $QDIR/min_disk_gb when that file exists (read at every pop, so a running worker
+    picks up a new limit without a restart)"""
+    try:
+        return float((QDIR / "min_disk_gb").read_text().split()[0])
+    except (OSError, ValueError, IndexError):
+        return MIN_DISK_GB
+
+
 def disk_free_gb():
     return shutil.disk_usage(QDIR).free / 2**30
 
@@ -198,11 +207,11 @@ def pop(gpu, worker):
             elif not complete(Path(r["job"]["out"]) / f"{r['job']['name']}.json"):
                 say(f"gpu{r['gpu']} worker {r['pid']} gone: re-queue {r['job']['out']}/{r['job']['name']}")
                 lines.insert(0, r["job"]["line"])
-        free_disk = disk_free_gb()
-        if free_disk < MIN_DISK_GB:
+        free_disk, min_disk = disk_free_gb(), min_disk_gb()
+        if free_disk < min_disk:
             last = read_lines(QDIR / "status.txt")[-1:]
             if not (last and "disk low" in last[0]):
-                say(f"disk low ({free_disk:.0f} GB free < {MIN_DISK_GB:.0f}): no new job starts")
+                say(f"disk low ({free_disk:.0f} GB free < {min_disk:.0f}): no new job starts")
             write_lines(QDIR / "running.txt", [r["raw"] for r in running])
             write_lines(qpath, lines)
             return 3
@@ -251,7 +260,7 @@ def finish(gpu, name, out, ok, rc):
             else:
                 others.append(r["raw"])
         write_lines(QDIR / "running.txt", others)
-        disk_low = not ok and disk_free_gb() < MIN_DISK_GB
+        disk_low = not ok and disk_free_gb() < min_disk_gb()
         with open(QDIR / "history.txt", "a") as f:  # a disk-low failure ends in "disk-low": not counted below
             f.write(f"{now()} gpu{gpu} {out}/{name} rc={rc} ok={ok}{' disk-low' if disk_low else ''}\n")
         if ok or mine is None:
