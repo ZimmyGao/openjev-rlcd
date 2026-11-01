@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openjev-rlcd"
-version = "0.1.0"
-description = "OpenJev-RLCD: a working RLCD (reinforcement learning for calibrated decisions) implementation for reasoning models"
+version = "0.2.0"
+description = "Post-rationale distribution optimization (PRDO) and OpenJev-RLCD: training the answer distribution of reasoning models with proper scores"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
