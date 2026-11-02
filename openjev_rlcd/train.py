@@ -582,6 +582,7 @@ def write_json(path, obj):
     """the run file, written through <path>.tmp: a run killed while writing never leaves a truncated file, which the
     job queue would take as finished if it already held '"test": {'"""
     tmp = f"{path}.tmp"
+    Path(tmp).parent.mkdir(parents=True, exist_ok=True)
     Path(tmp).write_text(json.dumps(obj, indent=2))
     os.replace(tmp, path)
 

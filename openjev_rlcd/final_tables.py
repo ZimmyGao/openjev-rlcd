@@ -97,7 +97,7 @@ def main():
             table[key] = pack(runs)
             cell = lambda k: f"{st.mean(r[1][k] for r in runs):.3f}" + (f"±{st.pstdev([r[1][k] for r in runs]):.3f}" if len(runs) > 1 else "")
             print(f"{key:26s} n={len(runs)}  acc={cell('acc')}  Brier={cell('brier')}  NLL={cell('nll')}  ECE={cell('ece')}  "
-                  f"AURC={cell('aurc')}  oc@.05={cell('oracle_cov@0.05')}  oc@.1={cell('oracle_cov@0.1')}  "
+                  f"AURC={cell('aurc')}  oc@.05={cell('oracle_cov@0.05')}  oc@.1={cell('oracle_cov@0.1')}  oc@.2={cell('oracle_cov@0.2')}  "
                   f"T={st.mean(r[2] for r in runs):.2f}")
     print("\nPaired on test items (per-item means over seeds): Δ = first − second; Brier/AURC negative = first better")
     pairs = [("stage1 + RLCD-RL", "SFT+TS 400"), ("stage1 + RLCD-RL", "GRPO+TS"), ("stage1 + RLCD-RL", "base"),
