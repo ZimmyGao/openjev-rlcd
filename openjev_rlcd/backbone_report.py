@@ -43,18 +43,18 @@ def old_dir(model):
     return ROOT / "results" if model == "qwen3-1.7b" else ROOT / "runs/backbones" / model
 
 
-# runs left out of every mean and paired test, with the reason (decided with the user, 2026-10-11 and 2026-10-15).
+# runs left out of every mean and paired test, with the reason (decided by the authors, 2026-10-11 and 2026-10-15).
 # Rule (evaluation.collapsed, also applied by final_tables and to any run missing here): the policy's test rationales
 # have collapsed -- mean <= 5 tokens or every rationale at the length limit with repetition >= 0.9. A scan of all 228
 # rationale runs (2026-10-16) finds exactly these five, all RFT+KL+TS.
-_SMOL_MP = "SmolLM3 MMLU-Pro RFT+KL 三个 seed 全部塌缩（推理只剩 2 个 token），按决定排除，这一格没有 RFT+KL+TS"
+_SMOL_MP = "SmolLM3 MMLU-Pro RFT+KL: all three seeds collapsed (rationales of 2 tokens); excluded, so this cell has no RFT+KL+TS"
 EXCLUDED = {"runs/backbones/smollm3-3b/gv_rftkl_seed17.json":
-            "SmolLM3 GSM8K-V RFT+KL seed 17 塌缩（推理只剩 2 个 token，准确率 50%），按决定排除；seed 23/29 正常",
+            "SmolLM3 GSM8K-V RFT+KL seed 17 collapsed (rationales of 2 tokens, accuracy 50%); excluded; seeds 23/29 are normal",
             "runs/backbones/smollm3-3b/mp_rftkl_seed17.json": _SMOL_MP,
             "runs/backbones/smollm3-3b/mp_rftkl_seed23.json": _SMOL_MP,
             "runs/backbones/smollm3-3b/mp_rftkl_seed29.json": _SMOL_MP,
             "runs/backbones/phi-4-mini/gv_rftkl_seed29.json":
-            "Phi-4-mini GSM8K-V RFT+KL seed 29 塌缩（每条推理都写到 320 token 上限、重复率 0.99），按决定排除；seed 17/23 正常"}
+            "Phi-4-mini GSM8K-V RFT+KL seed 29 collapsed (every rationale at the 320-token limit, repetition 0.99); excluded; seeds 17/23 are normal"}
 
 
 def arms(model, px):
@@ -62,61 +62,61 @@ def arms(model, px):
     old, new, a04 = old_dir(model), ROOT / "runs/anchored01" / model, ROOT / "runs/anchored" / model
     base = "gv_base_eval_full" if px == "gv" else "mp_base_eval"
     return [
-        ("base", "base（零样本推理）", old, base, "teacher"),
+        ("base", "base (zero-shot, with reasoning)", old, base, "teacher"),
         ("sft", "SFT+TS", old, f"{px}_direct_lr2e-6_seed{{s}}", "direct"),
         ("grpo", "GRPO+TS", old, f"{px}_grpokl_seed{{s}}", "teacher"),
         ("rftkl", "RFT+KL+TS", old, f"{px}_rftkl_seed{{s}}", "teacher"),
-        ("s1_old", "旧 stage 1", old, f"{px}_warm400_seed{{s}}", "teacher"),
-        ("rl_old", "旧 两阶段", old, f"{px}_fork_rl_seed{{s}}", "teacher"),
-        ("ro_old", "旧 s1 + 只训读出", old, f"{px}_fork_ro_seed{{s}}", "teacher"),
-        ("anc_old", "旧 s1 + 只有噪声无奖励", old, f"{px}_fork_anchor_seed{{s}}", "teacher"),
-        ("fgrpo_old", "旧 s1 + GRPO", old, f"{px}_fork_grpo_seed{{s}}", "teacher"),
-        ("ce_old", "旧 stage 1（log score）", old, f"{px}_ce_seed{{s}}", "teacher"),
-        ("s1_04", "锚点 0.04 stage 1", a04, f"{px}_warm400_seed{{s}}", "teacher"),
-        ("rl_04", "锚点 0.04 两阶段", a04, f"{px}_fork_rl_seed{{s}}", "teacher"),
-        ("rlnoanc_04", "锚点 0.04 s1 + RLCD-RL（stage 2 无锚点）", a04, f"{px}_fork_rlnoanc_seed{{s}}", "teacher"),
-        ("ro_04", "锚点 0.04 s1 + 只训读出", a04, f"{px}_fork_ro_seed{{s}}", "teacher"),
-        ("anc_04", "锚点 0.04 s1 + 只有噪声无奖励", a04, f"{px}_fork_anchor_seed{{s}}", "teacher"),
-        ("fgrpo_04", "锚点 0.04 s1 + GRPO", a04, f"{px}_fork_grpo_seed{{s}}", "teacher"),
-        ("ce_04", "锚点 0.04 stage 1（log score）", a04, f"{px}_ce_seed{{s}}", "teacher"),
-        ("s1_0025", "锚点 0.0025 stage 1", a04, f"{px}_warm400_kt0.0025_seed{{s}}", "teacher"),
+        ("s1_old", "old stage 1", old, f"{px}_warm400_seed{{s}}", "teacher"),
+        ("rl_old", "old two-stage", old, f"{px}_fork_rl_seed{{s}}", "teacher"),
+        ("ro_old", "old s1 + readout-only training", old, f"{px}_fork_ro_seed{{s}}", "teacher"),
+        ("anc_old", "old s1 + noise only, no reward", old, f"{px}_fork_anchor_seed{{s}}", "teacher"),
+        ("fgrpo_old", "old s1 + GRPO", old, f"{px}_fork_grpo_seed{{s}}", "teacher"),
+        ("ce_old", "old stage 1 (log score)", old, f"{px}_ce_seed{{s}}", "teacher"),
+        ("s1_04", "anchor 0.04 stage 1", a04, f"{px}_warm400_seed{{s}}", "teacher"),
+        ("rl_04", "anchor 0.04 two-stage", a04, f"{px}_fork_rl_seed{{s}}", "teacher"),
+        ("rlnoanc_04", "anchor 0.04 s1 + RLCD-RL (no anchor in stage 2)", a04, f"{px}_fork_rlnoanc_seed{{s}}", "teacher"),
+        ("ro_04", "anchor 0.04 s1 + readout-only training", a04, f"{px}_fork_ro_seed{{s}}", "teacher"),
+        ("anc_04", "anchor 0.04 s1 + noise only, no reward", a04, f"{px}_fork_anchor_seed{{s}}", "teacher"),
+        ("fgrpo_04", "anchor 0.04 s1 + GRPO", a04, f"{px}_fork_grpo_seed{{s}}", "teacher"),
+        ("ce_04", "anchor 0.04 stage 1 (log score)", a04, f"{px}_ce_seed{{s}}", "teacher"),
+        ("s1_0025", "anchor 0.0025 stage 1", a04, f"{px}_warm400_kt0.0025_seed{{s}}", "teacher"),
         ("s1", "stage 1", new, f"{px}_warm400_seed{{s}}", "teacher"),
-        ("rl", "两阶段（s1 + RLCD-RL）", new, f"{px}_fork_rl_seed{{s}}", "teacher"),
-        ("rlnoanc", "s1 + RLCD-RL（stage 2 无锚点）", new, f"{px}_fork_rlnoanc_seed{{s}}", "teacher"),
-        ("ro", "s1 + 只训读出", new, f"{px}_fork_ro_seed{{s}}", "teacher"),
-        ("anc", "s1 + 只有噪声无奖励", new, f"{px}_fork_anchor_seed{{s}}", "teacher"),
+        ("rl", "two-stage (s1 + RLCD-RL)", new, f"{px}_fork_rl_seed{{s}}", "teacher"),
+        ("rlnoanc", "s1 + RLCD-RL (no anchor in stage 2)", new, f"{px}_fork_rlnoanc_seed{{s}}", "teacher"),
+        ("ro", "s1 + readout-only training", new, f"{px}_fork_ro_seed{{s}}", "teacher"),
+        ("anc", "s1 + noise only, no reward", new, f"{px}_fork_anchor_seed{{s}}", "teacher"),
         ("fgrpo", "s1 + GRPO", new, f"{px}_fork_grpo_seed{{s}}", "teacher"),
-        ("ce", "stage 1（log score）", new, f"{px}_ce_seed{{s}}", "teacher"),
+        ("ce", "stage 1 (log score)", new, f"{px}_ce_seed{{s}}", "teacher"),
     ]
 
 
 # (first, second, question): delta = first - second
 PAIRS = [
-    ("s1", "s1_old", "stage 1：新配方（0.01）vs 旧配方（无锚点）"),
-    ("rl", "rl_old", "两阶段：新配方（0.01）vs 旧配方（无锚点）"),
-    ("s1", "s1_04", "stage 1：锚点 0.01 vs 0.04"),
-    ("rl", "rl_04", "两阶段：锚点 0.01 vs 0.04"),
-    ("s1_0025", "s1", "stage 1：锚点 0.0025 vs 0.01"),
-    ("s1_04", "s1_old", "stage 1：锚点 0.04 vs 无锚点（旧）"),
-    ("rl", "s1", "stage 2（RLCD-RL）有没有增益"),
-    ("rl", "rlnoanc", "stage 2 里锚点的作用"),
-    ("rl", "ro", "RLCD-RL vs 只训读出续训"),
-    ("rl", "anc", "RLCD-RL vs 只有噪声无奖励"),
-    ("rl", "fgrpo", "RLCD-RL vs GRPO 续训"),
-    ("fgrpo", "s1", "GRPO 续训有没有增益"),
-    ("s1", "ce", "stage 1：Brier vs log score"),
-    ("rl", "sft", "两阶段 vs SFT+TS"),
-    ("rl", "grpo", "两阶段 vs GRPO+TS"),
-    ("rl", "rftkl", "两阶段 vs RFT+KL+TS"),
-    ("rl", "base", "两阶段 vs base"),
+    ("s1", "s1_old", "stage 1: new recipe (0.01) vs old recipe (no anchor)"),
+    ("rl", "rl_old", "two-stage: new recipe (0.01) vs old recipe (no anchor)"),
+    ("s1", "s1_04", "stage 1: anchor 0.01 vs 0.04"),
+    ("rl", "rl_04", "two-stage: anchor 0.01 vs 0.04"),
+    ("s1_0025", "s1", "stage 1: anchor 0.0025 vs 0.01"),
+    ("s1_04", "s1_old", "stage 1: anchor 0.04 vs no anchor (old)"),
+    ("rl", "s1", "does stage 2 (RLCD-RL) add anything"),
+    ("rl", "rlnoanc", "the anchor's effect in stage 2"),
+    ("rl", "ro", "RLCD-RL vs readout-only continuation"),
+    ("rl", "anc", "RLCD-RL vs noise only, no reward"),
+    ("rl", "fgrpo", "RLCD-RL vs GRPO continuation"),
+    ("fgrpo", "s1", "does the GRPO continuation add anything"),
+    ("s1", "ce", "stage 1: Brier vs log score"),
+    ("rl", "sft", "two-stage vs SFT+TS"),
+    ("rl", "grpo", "two-stage vs GRPO+TS"),
+    ("rl", "rftkl", "two-stage vs RFT+KL+TS"),
+    ("rl", "base", "two-stage vs base"),
     ("s1", "sft", "stage 1 vs SFT+TS"),
     ("s1", "grpo", "stage 1 vs GRPO+TS"),
     ("s1", "rftkl", "stage 1 vs RFT+KL+TS"),
     ("s1", "base", "stage 1 vs base"),
-    ("rl_04", "s1_04", "锚点 0.04：stage 2 增益"),
-    ("rl_04", "ro_04", "锚点 0.04：RLCD-RL vs 只训读出续训"),
-    ("rl_04", "anc_04", "锚点 0.04：RLCD-RL vs 只有噪声无奖励"),
-    ("rl_04", "fgrpo_04", "锚点 0.04：RLCD-RL vs GRPO 续训"),
+    ("rl_04", "s1_04", "anchor 0.04: stage-2 gain"),
+    ("rl_04", "ro_04", "anchor 0.04: RLCD-RL vs readout-only continuation"),
+    ("rl_04", "anc_04", "anchor 0.04: RLCD-RL vs noise only, no reward"),
+    ("rl_04", "fgrpo_04", "anchor 0.04: RLCD-RL vs GRPO continuation"),
 ]
 
 
@@ -230,10 +230,10 @@ def section(model, label, task, px, tname, n_test):
             files += used
     lines = [f"### {label} · {tname}", ""]
     notes = list(dict.fromkeys(why for f, why in EXCLUDED.items() if f.startswith(f"runs/backbones/{model}/{px}_")))
-    lines += [f"注：{x}。" for x in notes] + ([""] if notes else [])
+    lines += [f"Note: {x}." for x in notes] + ([""] if notes else [])
     if not scored:
-        return lines + ["（还没有结果）", ""], {}, {}, []
-    lines += ["| 组 | seeds | 读出 | 准确率 % | Brier | ECE | AURC | 自动化覆盖@5% | oracle 覆盖@5% | 原始 T |",
+        return lines + ["(no results yet)", ""], {}, {}, []
+    lines += ["| arm | seeds | readout | accuracy % | Brier | ECE | AURC | coverage@5% | oracle coverage@5% | raw T |",
               "|---|---|---|---|---|---|---|---|---|---|"]
     metrics = {}
     for key, res in scored.items():
@@ -253,8 +253,8 @@ def section(model, label, task, px, tname, n_test):
                          f"{mean_sd([t['oracle_cov@0.05'] for t in ts], '{:.0f}', 100)} | {m['T']:.2f} |")
     rows = [(k, v) for k, v in drift.items() if v]
     if rows:
-        lines += ["", "推理文本（测试集，seed 平均）：", "",
-                  "| 组 | 不写 \"Answer:\" | 平均 token 数 | 触到长度上限 | 重复率 |", "|---|---|---|---|---|"]
+        lines += ["", "Rationales (test set, mean over seeds):", "",
+                  "| arm | no \"Answer:\" | mean tokens | at the length limit | repetition |", "|---|---|---|---|---|"]
         for key, dr in rows:
             g = lambda f: st.mean(x[f] for x in dr) if all(x.get(f) is not None for x in dr) else None
             vals = [g("forced"), g("mean_rationale_tokens"), g("length_limit_rate"), g("repetition_ratio")]
@@ -275,15 +275,15 @@ def section(model, label, task, px, tname, n_test):
             plines.append(f"| {q} | {RO_NAME[ro]} | {seeds_str(c['seeds'])} | {delta_cell(c, 'dacc', '{:+.1f}', 100)} | "
                           f"{delta_cell(c, 'dbrier', '{:+.4f}')} | {delta_cell(c, 'daurc', '{:+.4f}')} |")
     if plines:
-        lines += ["", "配对检验（Δ = 前者 − 后者；Brier/AURC 为负 = 前者更好；* p<0.05，** p<0.01）：", "",
-                  "| 比较 | 读出 | seeds | Δ准确率 (pp) | ΔBrier | ΔAURC |", "|---|---|---|---|---|---|"] + plines
+        lines += ["", "Paired tests (Δ = first − second; negative Brier/AURC = first is better; * p<0.05, ** p<0.01):", "",
+                  "| comparison | readout | seeds | Δaccuracy (pp) | ΔBrier | ΔAURC |", "|---|---|---|---|---|---|"] + plines
     return lines + [""], metrics, pairs, files
 
 
 def summary_rows(results):
-    head = ["| 模型 · 任务 | seeds（s1 / 两阶段） | s1：0.01 − 0.04 ΔAURC | s1：新 − 旧 ΔAURC | "
-            "stage 2 增益（两阶段 − s1）ΔAURC | 两阶段 vs SFT+TS ΔBrier / ΔAURC | 两阶段 vs GRPO+TS ΔBrier / ΔAURC | "
-            "两阶段 vs RFT+KL+TS ΔBrier / ΔAURC |",
+    head = ["| model · task | seeds (s1 / two-stage) | s1: 0.01 − 0.04 ΔAURC | s1: new − old ΔAURC | "
+            "stage-2 gain (two-stage − s1) ΔAURC | two-stage vs SFT+TS ΔBrier / ΔAURC | two-stage vs GRPO+TS ΔBrier / ΔAURC | "
+            "two-stage vs RFT+KL+TS ΔBrier / ΔAURC |",
             "|---|---|---|---|---|---|---|---|"]
     rows = []
     for (label, tname), (metrics, pairs) in results.items():
@@ -337,17 +337,17 @@ def progress():
     for r in running:  # <gpu> <pid> <start epoch> <name> <out> ...
         remaining += max(0.0, est(f"{r[4]}/{r[3]}") - (now - int(r[2])) / 60)
     eta = time.strftime("%m-%d %H:%M", time.localtime(now + remaining / 2 * 60))
-    lines = ["## 队列进度", "",
-             f"已完成 {done} 个，失败 {failed} 个，正在跑 {len(running)} 个，排队 {len(queued)} 个。"
-             f"按已完成实验的平均耗时粗估，剩余约 {remaining / 60 / 2:.0f} 小时（两张卡），预计 {eta} 左右全部跑完。", ""]
+    lines = ["## Queue progress", "",
+             f"{done} done, {failed} failed, {len(running)} running, {len(queued)} queued. "
+             f"At the mean duration of the finished runs, about {remaining / 60 / 2:.0f} h remain (two GPUs); all done around {eta}.", ""]
     for r in running:
-        lines.append(f"- GPU{r[0]}：{r[4]}/{r[3]}（已跑 {(now - int(r[2])) / 60:.0f} 分钟）")
+        lines.append(f"- GPU{r[0]}: {r[4]}/{r[3]} (running for {(now - int(r[2])) / 60:.0f} min)")
     by_model = {}
     for j in queued:
         m = j[1].split("/")[2] if j[1].count("/") >= 2 else j[1]
         by_model[m] = by_model.get(m, 0) + 1
     if by_model:
-        lines.append("- 排队中按模型：" + "，".join(f"{m} {n} 个" for m, n in by_model.items()))
+        lines.append("- queued, by model: " + ", ".join(f"{m} {n}" for m, n in by_model.items()))
     return lines + [""]
 
 
@@ -391,15 +391,15 @@ def main():
             if c["metrics"]:
                 summary[(label, tname)] = (c["metrics"], c["pairs"])
             out_json[key] = dict(metrics=c["metrics"], pairs=c["pairs"])
-    head = ["# 多 backbone 结果汇总（锚点重跑）", "",
-            f"生成时间 {time.strftime('%Y-%m-%d %H:%M')}。所有数字都在 dev 上做过温度缩放（TS）；每组多个 seed 时给出 "
-            "均值±标准差。\"one\" = 单条推理的读出，\"mix\" = 4 条推理混合的读出。不带前缀的 stage 1 / 两阶段 / 对照"
-            "都是主配方：token 级 KL 锚点 0.01（runs/anchored01，2026-10-11 定）；\"锚点 0.04\" 是第一次锚点重跑"
-            "（runs/anchored），现作锚点强度消融；\"旧\" = 论文原配方（stage 1 里 KL 项不起作用）。配对检验只用两组共有的 seed，"
-            "p 值反映的是测试题目的抽样误差，不包含 seed 间的差异；只有一个 seed 时要谨慎解读。", ""]
+    head = ["# Multi-backbone results (anchored rerun)", "",
+            f"Generated {time.strftime('%Y-%m-%d %H:%M')}. Every number is after temperature scaling (TS) on dev; arms with several seeds give "
+            "mean ± s.d. \"one\" = the readout after one rationale, \"mix\" = the mixture of 4 readouts. Stage 1, two-stage and controls without a prefix "
+            "are the main recipe: token-level KL anchor 0.01 (runs/anchored01, fixed 2026-10-11); \"anchor 0.04\" is the first anchored rerun "
+            "(runs/anchored), now an ablation of the anchor weight; \"old\" = the paper's original recipe (no effective KL term in stage 1). Paired tests use only the seeds both arms have; "
+            "p values reflect the sampling of the test items, not variation between seeds; read single-seed results with care.", ""]
     head += progress()
-    head += ["## 总览（单条推理读出；Δ 为负 = 前者更好；* p<0.05，** p<0.01）", ""] + summary_rows(summary) + [""]
-    text = "\n".join(head + ["## 分模型、分任务明细", ""] + body) + "\n"
+    head += ["## Overview (single-rationale readout; negative Δ = first is better; * p<0.05, ** p<0.01)", ""] + summary_rows(summary) + [""]
+    text = "\n".join(head + ["## By model and task", ""] + body) + "\n"
     for path, content in ((Path(args.out), text), (Path(args.json), json.dumps(out_json, indent=1)),
                           (cache_path, json.dumps(cache))):
         tmp = path.with_name(path.name + ".tmp")
