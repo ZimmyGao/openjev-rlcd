@@ -35,6 +35,15 @@ In the code, PRDO is stage 1 of the training loop:
 
 ## Main results
 
+**Reading the metrics.** Accuracy ↑ is the fraction of correct decisions. Brier score ↓ measures the squared error
+of the predicted answer distribution against the correct label. AURC ↓ is the area under the risk–coverage curve:
+coverage is the fraction of questions answered, and risk is the error rate among those answers as progressively
+less confident questions are accepted.
+
+**Oracle coverage ↑** at an error budget (for example, 20%) is computed using the test labels to select an accepted
+prefix of the confidence ranking. It describes retrospective performance; it is not a deployment guarantee or a
+threshold selected without test labels. Risk-controlled thresholds use a separate calibration split.
+
 Setup:
 - MMLU-Pro on four models (Qwen3-0.6B, Qwen3-1.7B, SmolLM3-3B, Phi-4-mini-instruct);
 - GSM8K-Verify on the two Qwen3 models;
@@ -86,26 +95,80 @@ data/                gsm8k_verify.json and svamp_verify.json (constructed sets),
 results/             per-item result files behind the tables of the arXiv version
 ```
 
-## Install
+## Quick start
+
+Run the following in Bash from a terminal. Clone the repository and install the dependencies first:
 
 ```bash
+git clone https://github.com/ZimmyGao/openjev-rlcd.git
+cd openjev-rlcd
 python3.12 -m venv .venv && source .venv/bin/activate   # the pins in requirements.txt need Python 3.12
 pip install -r requirements.txt        # versions the experiments ran with (CUDA 12.4)
 # or: pip install -e ".[analysis,test]"  (editable only: the code reads data/ and results/ from the checkout)
-python -m pytest tests                 # CPU; tests that need a cached model or dataset are skipped without it
 ```
+
+Choose a path:
+
+| Goal | Hardware | Next step |
+|---|---|---|
+| Run unit tests | CPU | Run the test command below; cached-model and cached-dataset checks may be skipped |
+| Recompute the released arXiv tables | CPU | Cache MMLU-Pro as shown below, then run `make_tables.sh` |
+| Train PRDO or a baseline | CUDA GPU | Cache the model and dataset below, then use the [training commands](#reproduce-the-npj-experiments) |
+
+**CPU unit tests:**
+
+```bash
+HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 python -m pytest tests
+```
+
+**CPU analysis of released results:** the GSM8K-Verify data is already in the checkout. Download MMLU-Pro once
+(internet required), then recompute both tables offline without downloading a model:
+
+```bash
+HF_HUB_OFFLINE=0 HF_DATASETS_OFFLINE=0 python -c \
+  'from datasets import load_dataset; load_dataset("TIGER-Lab/MMLU-Pro")'
+HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 bash scripts/make_tables.sh
+```
+
+**GPU training:** first prepare the cache using the next section. Then run the
+[PRDO, GRPO+TS or SFT+TS examples](#reproduce-the-npj-experiments) from this checkout with the virtual environment
+activated. Those examples use Qwen3-1.7B and MMLU-Pro.
 
 Each run uses one 48 GB GPU; the papers used RTX 6000 Ada. A 400-step run takes about 0.7–2.3 h on Qwen3 and 3–4.5 h
 on SmolLM3-3B or Phi-4-mini, plus the test evaluation.
 
+### First download and offline runs
+
 **Offline by default.** These entry points run offline and use the cached model and dataset revisions:
 - `train` and `train_direct`;
 - `npj_report` and `npj_decide`;
-- the probes and the SVAMP-Verify build.
+- `think_probe`, `credo_probe` and the SVAMP-Verify build.
 
-`make_tables.sh` (`final_tables`), `backbone_report` and `probe` do not run offline; give them
-`HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1`. Fill the cache once by running with `HF_HUB_OFFLINE=0 HF_DATASETS_OFFLINE=0`.
-The code pins no revision, so this fetches the Hub's current ones. The npj runs used these:
+`make_tables.sh` (`final_tables`), `backbone_report` and `probe` do not enable offline mode themselves; give them
+`HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1` to use the cache only. In particular, `probe` is the backbone screening
+command, distinct from `think_probe` and `credo_probe`.
+
+A fresh checkout has no Hugging Face cache. For the Qwen3-1.7B / MMLU-Pro training examples, download the model,
+tokenizer and dataset once with internet access (no GPU is needed for this download):
+
+```bash
+HF_HUB_OFFLINE=0 HF_DATASETS_OFFLINE=0 python - <<'PY'
+from huggingface_hub import snapshot_download
+from datasets import load_dataset
+
+snapshot_download(repo_id="Qwen/Qwen3-1.7B")
+load_dataset("TIGER-Lab/MMLU-Pro")
+PY
+```
+
+The training commands can then use their default offline mode on the same machine and with the same cache location.
+For another model or task, cache its corresponding Hub repository and dataset first. GSM8K-Verify training reads
+the included `data/gsm8k_verify.json`, so it does not need an upstream GSM8K download. If an entry point reports a
+missing cache, prepare that resource online first, or prefix the command with
+`HF_HUB_OFFLINE=0 HF_DATASETS_OFFLINE=0` to allow downloads during the run.
+
+The commands above fetch the Hub's current revisions; they do not pin the historical experiment versions.
+The npj runs used these:
 
 | Model or dataset | Revision |
 |---|---|
@@ -263,6 +326,10 @@ Results with Qwen3-1.7B (3 seeds, single query, temperature-scaled on dev):
 | RFT/STaR + KL + TS | 91.4 / 0.160 / 0.073 / 11% | 40.9 / 0.761 / 0.494 / 0% |
 | GRPO + KL + TS | 91.8 / 0.150 / 0.067 / 10% | 42.4 / 0.753 / 0.481 / 0% |
 | **RLCD two-stage** | **92.2 / 0.135 / 0.034 / 81%** | **47.7 / 0.658 / 0.304 / 28%** |
+
+Accuracy and coverage are higher-is-better; Brier score and AURC are lower-is-better. `Cov@5%` and `Cov@20%` in this
+table are **oracle coverage**, selected using test labels at error budgets of 5% and 20%, respectively. They do not
+guarantee those error rates on future queries.
 
 **Changes since arXiv v1 (2026-10-16): metrics.**
 - **Ties.** AURC and Cov@ε used to rank items of equal confidence by their position in the test set. Items are now
